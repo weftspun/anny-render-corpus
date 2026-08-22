@@ -1,0 +1,47 @@
+# The render environment, declared, because the alternative is the Hailo session again.
+#
+# CLAUDE.md blocklists `uv` for project environments and records why: standing up the Hailo
+# compiler took more than twenty packages, discovered one `ModuleNotFoundError` at a time,
+# and afterwards none of it existed in a manifest, a lock or the logbook. The work was
+# repeatable only by repeating the guessing.
+#
+# This file exists because that happened again on 2026-08-22, in a different shape. The
+# renderer here was being driven from a system Python where `mitsuba`, `numpy` and `pillow`
+# were installed by nobody in particular, and the Blender pass it replaces was being run
+# from whatever version the desk's package manager last offered. Neither was written down.
+#
+# WHY MITSUBA AND NOT BLENDER. Blender is blocklisted for reproducibility: its headless
+# output moves with the version and the build flags, and the version is pinned by nothing.
+# Mitsuba is a wheel, so `pixi.lock` pins it exactly, and it renders the same bytes twice
+# when the thread count is fixed -- measured, not assumed:
+#
+#   llvm_ad_rgb, 1 thread    identical, sha256 equal over two runs
+#   llvm_ad_rgb, default     up to 1/255 on 12-16 pixels of 1,048,576
+#   cuda_ad_rgb, default     the same, film accumulation order rather than metadata
+#
+# So `render_view.py` sets the thread count through the drjit API. The environment variable
+# `DRJIT_NUM_THREADS` was tried first and had no effect at all.
+
+# `workspace`, not `project`: pixi 0.76 deprecates the older spelling and warns on every
+# invocation, and a warning nobody can act on trains people to ignore warnings.
+[workspace]
+name = "dataflow-coco-gemx"
+version = "0.1.0"
+description = "ANNY render corpus: poses in, labelled frames out"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64"]
+
+[dependencies]
+python = "3.11.*"
+numpy = ">=2.0"
+pillow = ">=10.0"
+
+[pypi-dependencies]
+# Pinned exactly. The renderer is a measuring instrument, and an instrument that changes
+# version between two runs has made the two runs incomparable.
+mitsuba = "==3.9.1"
+
+[tasks]
+# The check the Blender blocklist entry demands of any replacement, as a task rather than a
+# paragraph somebody has to remember to run.
+render-view = "python render_view.py"
