@@ -50,6 +50,15 @@ def main():
     ap.add_argument("--text-guidance", type=float, default=5.0)
     ap.add_argument("--image-guidance", type=float, default=2.0)
     ap.add_argument("--seed", type=int, default=0)
+    # UPSTREAM'S DEFAULT, NOT AN EMPTY STRING, AND THE DIFFERENCE IS NOT COSMETIC. This script
+    # passed "" and upstream's inference.py passes a quality-control negative prompt. Comparing
+    # a run of ours against a run of theirs therefore varied two things at once, which is how a
+    # precision claim got made on a confounded pair.
+    ap.add_argument("--negative", default=(
+        "(((deformed))), blurry, over saturation, bad anatomy, disfigured, poorly drawn face, "
+        "mutation, mutated, (extra_limb), (ugly), (poorly drawn hands), fused fingers, messy "
+        "drawing, broken legs censor, censored, censor_bar"))
+    ap.add_argument("--tag", default="")
     ap.add_argument("--precision", choices=["bf16", "nf4"], default="bf16",
                     help="bf16 for anything that becomes corpus; nf4 only for device sizing")
     args = ap.parse_args()
@@ -114,7 +123,7 @@ def main():
     record = {"model": args.model, "precision": args.precision,
               "corpus_eligible": not quantised, "steps": args.steps,
               "text_guidance_scale": args.text_guidance, "image_guidance_scale": args.image_guidance,
-              "seed": args.seed, "torch": torch.__version__,
+              "seed": args.seed, "negative_prompt": args.negative, "torch": torch.__version__,
               "weights_gib": round(weights_gib, 2), "outputs": {}}
 
     for name, prompt in PROMPTS.items():
@@ -124,10 +133,10 @@ def main():
                    num_inference_steps=args.steps, max_sequence_length=1024,
                    text_guidance_scale=args.text_guidance,
                    image_guidance_scale=args.image_guidance,
-                   negative_prompt="", num_images_per_prompt=1,
+                   negative_prompt=args.negative, num_images_per_prompt=1,
                    generator=torch.Generator(device="cuda").manual_seed(args.seed),
                    output_type="pil")
-        dst = os.path.join(args.out, f"omnigen2_{name}_{args.precision}.png")
+        dst = os.path.join(args.out, f"omnigen2_{name}_{args.precision}{args.tag}.png")
         res.images[0].save(dst)
         peak = gib(torch.cuda.max_memory_allocated())
         record["outputs"][name] = {"file": os.path.basename(dst),
@@ -135,7 +144,7 @@ def main():
                                    "peak_vram_gib": round(peak, 2)}
         print(f"  ok   {dst}  {time.time()-t1:.0f}s  peak {peak:.2f} GiB")
 
-    with open(os.path.join(args.out, f"omnigen2_provenance_{args.precision}.json"), "w") as fh:
+    with open(os.path.join(args.out, f"omnigen2_provenance_{args.precision}{args.tag}.json"), "w") as fh:
         json.dump(record, fh, indent=2)
     print("provenance written")
 
