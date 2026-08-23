@@ -95,6 +95,8 @@ bitsandbytes = "*"
 restyle = { features = ["restyle"], no-default-feature = true }
 omnigen2 = { features = ["omnigen2"], no-default-feature = true }
 editscore = { features = ["editscore"], no-default-feature = true }
+corpus = { features = ["corpus"], no-default-feature = true }
+anny = { features = ["anny"], no-default-feature = true }
 
 # OMNIGEN2, AND IT GETS ITS OWN ENVIRONMENT BECAUSE UPSTREAM PINS AGAINST THE OTHER ONE.
 #
@@ -165,3 +167,75 @@ json-repair = "*"
 pillow = ">=10.0"
 numpy = ">=2.0"
 
+
+# THE CORPUS ENVIRONMENT, AND IT EXISTS BECAUSE THE SCHEMA WAS NOT RUNNABLE.
+#
+# `anny_render_schema.py` imports pyarrow and `test_preflight.py` imports pandas, and until
+# now neither appeared in this file or in the lock. So the ETNF schema -- the relation
+# definitions, the foreign-key graph, `validate()`, and the `__main__` block that prints the
+# relation count -- could not be executed from any declared environment, on any desk. That is
+# the `uv` hazard with no `uv` involved: a dependency real work rests on, described nowhere.
+#
+# It is a feature with `no-default-feature` rather than three lines added to the render
+# environment, for the reason the restyle feature already states: the renderer is a measuring
+# instrument pinned to one Mitsuba, and it must not move because a parquet library did.
+[feature.corpus.dependencies]
+python = "3.11.*"
+pyarrow = ">=15"
+pandas = ">=2.0"
+numpy = ">=2.0"
+
+[feature.corpus.tasks]
+# The schema's own summary: relation and foreign-key counts, read out of the definitions
+# rather than restated. README numbers are checked against this.
+schema = "python anny_render_schema.py"
+# Whole-corpus gate. Takes a corpus root.
+validate = "python anny_render_schema.py"
+# The negative controls for the generated-synthetic checks. Needs no fixture: it builds and
+# corrupts its own, because a test that skips when its fixture is absent reads like a pass.
+test-edit-provenance = "python test_edit_provenance.py"
+# The train2017 fetch list, and the gate that refuses to build a contaminated one.
+coco-fetch-list = "python build_coco_fetch_list.py"
+test-coco-fetch-list = "python test_coco_fetch_list.py"
+# The shared-builder gate. Textual on purpose, so it runs without anny, torch or a GPU.
+corpus-model = "python check_corpus_model.py"
+test-corpus-model = "python check_corpus_model.py --self-test"
+# Fetches the 8,220 licence-clean train2017 images. Re-asserts the holdout
+# exclusion before the first network call and stores a sha256 per payload.
+coco-download = "python download_coco_images.py"
+
+# THE ANNY ENVIRONMENT, AND WHY IT IS SEPARATE FROM THE CORPUS ONE.
+#
+# `anny` needs torch, and the corpus feature is a parquet toolchain that must not acquire a
+# CUDA stack because a body model was added beside it. Same argument the restyle feature
+# already makes for the renderer.
+#
+# It exists because nothing in this checkout could import `anny` at all. That is why nine of
+# the eleven tagged claims in README.md report ModuleNotFoundError rather than a number, and
+# why `interface_audit.py`'s expression check cannot run: it reads
+# `model.facial_action_labels` and reports UNCHECKED when it cannot.
+[feature.anny.dependencies]
+python = "3.11.*"
+
+# NUMPY FROM PYPI, NOT CONDA, AND THE REASON IS A RUNTIME CLASH RATHER THAN A PREFERENCE.
+# With conda-forge numpy beside PyPI torch, importing both aborts:
+#
+#   OMP: Error #15: Initializing libomp.dll, but found libiomp5md.dll already initialized.
+#
+# Two OpenMP runtimes in one process. The documented workaround, KMP_DUPLICATE_LIB_OK=TRUE,
+# says in its own text that it "may cause crashes or silently produce incorrect results",
+# and this environment exists to take measurements -- a flag that can silently corrupt one
+# is worse than no environment at all.
+#
+# Same shape as the restyle feature's note above about conda pillow against torchvision's
+# DLLs, so the same answer: take both from PyPI, where the wheels carry their own runtimes
+# and cannot disagree.
+[feature.anny.pypi-dependencies]
+anny = "*"
+numpy = ">=2.0"
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
+
+[feature.anny.tasks]
+# Reads ANNY's own facial action labels and compares them against ARKit's 52 by NAME, in
+# both directions -- which is the check `interface_audit.py` states as a count.
+facs = "python check_facial_actions.py"

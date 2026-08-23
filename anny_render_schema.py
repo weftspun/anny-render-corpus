@@ -264,6 +264,82 @@ MESHES = pa.schema([
     ("geometry", pa.binary()),          # USD, per RFD 0053
 ])
 
+# --------------------------------------------------------------------------
+# Generated synthetic, kept apart from everything above. Every relation before
+# this point is CONSTRUCTED -- rendered deterministically from assets we hold,
+# labels true by construction. What follows is sampled from a generative model,
+# and CLAUDE.md admits it only under four conditions. Two of them are structural
+# rather than procedural, so they are built here instead of being remembered:
+#
+#   condition 1  the generating model, checkpoint and conditioning recorded
+#                WITH THE DATA. That is what these four relations are. A hash
+#                in a server log, or a JSON file beside a directory of PNGs, is
+#                next to the data rather than with it: the two part company the
+#                first time somebody copies the images.
+#   condition 2  stored and manifested separately from constructed and real
+#                data, never merged into an undifferentiated pool. That is why
+#                the pixels land in EDITED_RENDERS and never in RENDER_DATA,
+#                and why validate() fails a corpus that merges them.
+#
+# Conditions 3 (not the sole distribution) and 4 (evaluate on real or
+# constructed only) are properties of a training run, not of a table, so they
+# are not represented here and are not silently claimed.
+# --------------------------------------------------------------------------
+
+EDIT_MODELS = pa.schema([
+    ("edit_model_id", pa.int16()),
+    ("repo_id", pa.string()),           # "OmniGen2/OmniGen2"
+    # THE RESOLVED COMMIT, NEVER A MOVING TAG. `main` is not a checkpoint: it
+    # names whatever the vendor last pushed, so a corpus stamped with it stops
+    # resolving to the weights that produced it -- the same failure that
+    # blocklists hosted-API generators, arriving through a slower door.
+    ("revision", pa.string()),
+])
+
+# Interned because a prompt is long repeated text and it repeats once per image.
+# Positive and negative prompts share this relation: they are the same kind of
+# thing, and giving each its own table would duplicate the vocabulary.
+EDIT_PROMPTS = pa.schema([
+    ("prompt_id", pa.int32()),
+    ("text", pa.string()),
+])
+
+EDIT_RUNS = pa.schema([
+    ("edit_run_id", pa.int32()),
+    ("edit_model_id", pa.int16()),
+    ("prompt_id", pa.int32()),
+    ("negative_prompt_id", pa.int32()),
+    # "bf16" | "nf4". A bare string, following `identities.split`, because a
+    # two-value closed enum interns into a vocabulary nobody reads.
+    #
+    # NO `corpus_eligible` COLUMN, and its absence is the ETNF rule rather than
+    # an omission. Eligibility is a pure function of this field -- condition 5
+    # says quantised weights do not produce corpus data -- so a column for it
+    # would be derivable, and a derivable column is a second place the fact
+    # lives and a second place it can disagree. validate() derives it instead.
+    ("precision", pa.string()),
+    ("steps", pa.int16()),
+    ("text_guidance_scale", pa.float32()),
+    ("image_guidance_scale", pa.float32()),
+    ("started_utc", pa.string()),
+    # NO `domain` COLUMN either. "photographic" and "colour-sketch" are names
+    # for prompts, and `prompt_id` already carries which one ran.
+])
+
+# The generated pixels, and the join back to what they were generated FROM.
+#
+# NO KEYPOINT ROWS OF ITS OWN. An edit that moved a joint is discarded by T07's
+# verification rather than relabelled, so a surviving edited frame carries its
+# source render's labels exactly. Copying them here would materialise a
+# derivable fact and invite the copy to drift from the original.
+EDITED_RENDERS = pa.schema([
+    ("edit_id", pa.int64()),
+    ("render_id", pa.int64()),          # the constructed frame this was edited from
+    ("edit_run_id", pa.int32()),
+    ("seed", pa.int64()),               # regenerates this image alone
+    ("image", pa.binary()),
+])
+
 RELATIONS = {
     "bones": BONES, "phenotypes": PHENOTYPES, "local_changes": LOCAL_CHANGES,
     "licenses": LICENSES, "source_datasets": SOURCE_DATASETS,
@@ -274,7 +350,17 @@ RELATIONS = {
     "render_runs": RENDER_RUNS, "renders": RENDERS, "render_data": RENDER_DATA,
     "keypoints_2d": KEYPOINTS_2D, "segmentation": SEGMENTATION,
     "meshes": MESHES,
+    "edit_models": EDIT_MODELS, "edit_prompts": EDIT_PROMPTS,
+    "edit_runs": EDIT_RUNS, "edited_renders": EDITED_RENDERS,
 }
+
+# The generated half, named rather than inferred from a prefix. validate()
+# reads this to check condition 2, and a name-level guess is the failure mode
+# `extract_poses.py`'s docstring warns about three times over.
+GENERATED_RELATIONS = {"edit_models", "edit_prompts", "edit_runs", "edited_renders"}
+
+# Condition 5: these produce device-sizing evidence, not corpus data.
+QUANTISED_PRECISIONS = {"nf4", "int8", "int4", "q4_k_m", "gguf"}
 
 # Foreign keys, checked by validate().
 FOREIGN_KEYS = [
@@ -295,6 +381,14 @@ FOREIGN_KEYS = [
     ("render_data", "render_id", "renders", "render_id"),
     ("keypoints_2d", "render_id", "renders", "render_id"),
     ("source_datasets", "license_id", "licenses", "license_id"),
+    # Condition 1, as integrity rather than as a promise. An edited image whose
+    # run, model or prompt has gone missing fails here instead of entering a
+    # corpus unprovenanced.
+    ("edit_runs", "edit_model_id", "edit_models", "edit_model_id"),
+    ("edit_runs", "prompt_id", "edit_prompts", "prompt_id"),
+    ("edit_runs", "negative_prompt_id", "edit_prompts", "prompt_id"),
+    ("edited_renders", "render_id", "renders", "render_id"),
+    ("edited_renders", "edit_run_id", "edit_runs", "edit_run_id"),
 ]
 
 
@@ -369,6 +463,45 @@ def validate(root: str) -> list:
         leaked = [k for k, v in subj.items() if len(v) > 1]
         if leaked:
             problems.append(f"CONTAMINATION: {len(leaked)} source subjects span both splits")
+
+    # Condition 2: the generated half stays a separate pool. The way this gets
+    # violated is not a merge anybody decides on -- it is a convenience write
+    # that puts an edited PNG into render_data so one loader can read one table.
+    # Then the corpus has generated pixels in the constructed relation, with
+    # nothing recording which rows they are.
+    if "render_data" in tables and "edited_renders" in tables:
+        merged = (set(tables["render_data"]["render_id"].to_pylist())
+                  & set(tables["edited_renders"]["edit_id"].to_pylist()))
+        if merged:
+            problems.append(
+                f"POOL MERGE: {len(merged)} edit_ids also present in render_data.render_id; "
+                "generated frames must not share the constructed pool (condition 2)")
+
+    # Condition 5, derived rather than stored. A quantised run is device-sizing
+    # evidence, so its output is not corpus data -- and an UNMET PRECONDITION IS
+    # A FAIL: a corpus carrying edited_renders with no edit_runs to say what
+    # produced them is unprovenanced, which reads exactly like a clean corpus if
+    # this is written as a skip.
+    if "edited_renders" in tables:
+        if "edit_runs" not in tables:
+            problems.append(
+                "edited_renders present with no edit_runs relation: generated frames whose "
+                "precision cannot be established (condition 1 and condition 5 both unmet)")
+        else:
+            precision = dict(zip(tables["edit_runs"]["edit_run_id"].to_pylist(),
+                                 tables["edit_runs"]["precision"].to_pylist()))
+            ineligible = [r for r in tables["edited_renders"]["edit_run_id"].to_pylist()
+                          if str(precision.get(r, "")).lower() in QUANTISED_PRECISIONS]
+            if ineligible:
+                problems.append(
+                    f"NOT CORPUS DATA: {len(ineligible)} edited renders come from a quantised "
+                    "run (condition 5); they are device-sizing evidence, not corpus")
+            unknown = [r for r in tables["edited_renders"]["edit_run_id"].to_pylist()
+                       if r not in precision]
+            if unknown:
+                problems.append(
+                    f"{len(unknown)} edited renders name an edit_run that does not exist, so "
+                    "their precision is unknown and unchecked")
 
     return problems
 
