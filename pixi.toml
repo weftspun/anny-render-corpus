@@ -119,6 +119,9 @@ torchvision = { version = "==0.21.0", index = "https://download.pytorch.org/whl/
 transformers = "==4.51.3"
 diffusers = "*"
 accelerate = "*"
+# Not in upstream's requirements: they run bf16 on cards that hold it. NF4 is what the 8 GB
+# device question needs, so the quantiser is ours to add.
+bitsandbytes = "*"
 timm = "*"
 einops = "*"
 opencv-python-headless = "*"
