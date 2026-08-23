@@ -93,7 +93,23 @@ def measure_bvh_clip_count():
     return float(len(glob.glob(root + "/*/*.bvh")))
 
 
+def measure_schema_relations():
+    """UNTAGGED IS UNCHECKED, AND THIS NUMBER PROVES IT. The README asserted 19 ETNF
+    relations as plain prose, with no claim tag, so this file never looked at it. The real
+    count was 20 before the generated-synthetic relations landed: wrong, in a document whose
+    headline says every number below is machine-checked."""
+    import anny_render_schema
+    return float(len(anny_render_schema.RELATIONS))
+
+
+def measure_schema_foreign_keys():
+    import anny_render_schema
+    return float(len(anny_render_schema.FOREIGN_KEYS))
+
+
 MEASUREMENTS = {
+    "schema_relations": measure_schema_relations,
+    "schema_foreign_keys": measure_schema_foreign_keys,
     "twist_rmse_90_L": lambda: measure_twist_rmse("L"),
     "twist_rmse_90_R": lambda: measure_twist_rmse("R"),
     "twist_rmse_stock_L": lambda: measure_twist_rmse_stock("L"),

@@ -1,3 +1,12 @@
 *.pyc
 *.pyo
 __pycache__/
+
+# Fetched image BYTES, not the index. 1.37 GB of COCO train2017 JPEGs in zstd parquet
+# shards, regenerable from coco_fetch_train2017/fetch_list.parquet by download_coco_images.py
+# and verifiable against the sha256 stored beside each payload.
+#
+# The index IS tracked, deliberately: the same rule the pose datasets got, where a Google
+# Drive folder cannot be a manifest <project> and what satisfies the Sides rule is an index
+# in git rather than the bytes.
+coco_images_train2017/

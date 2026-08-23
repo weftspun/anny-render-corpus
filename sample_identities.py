@@ -43,11 +43,19 @@ def sample_anny(n: int, seed: int):
     """ANNY's own population prior. Returns (labels, rows) where rows[i] is a
     dict phenotype_name -> float in [0,1]."""
     import torch
-    import anny
+    import anny_rig
     from anny.shape_distribution import SimpleShapeDistribution
 
     torch.manual_seed(seed)
-    model = anny.Anny(local_changes="default", facial_actions="all")
+    # THROUGH THE SHARED BUILDER, AND THE DIFFERENCE WAS FIVE PHENOTYPES. This line used to
+    # construct `anny.Anny(local_changes="default", facial_actions="all")`, which omits
+    # `phenotypes="all"` from CORPUS_CONFIG and so samples over 6 dimensions instead of 11.
+    # The five it dropped are cupsize, firmness, african, asian and caucasian -- so every
+    # sampled identity carried default ancestry, and the corpus would have had none.
+    #
+    # Identities sampled by the old line are invalid and must be resampled: they were drawn
+    # from a distribution the renderer does not share.
+    model = anny_rig.build_corpus_model()
     dist = SimpleShapeDistribution(model)
     _age_years, pheno = dist.sample(n)          # (chronological age, {name: tensor})
     labels = list(model.phenotype_labels)       # gender, age, muscle, weight, height, proportions

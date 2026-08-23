@@ -59,7 +59,10 @@ def load_model():
     import anny
     from anny.models.model_data import TopologyConfig
 
-    model = anny.Anny(
+    model = anny.Anny(  # corpus-model-exempt: asserts the basemesh topology coco.pth is
+        # indexed against (19,158 vertices), which is deliberately NOT the corpus model's
+        # 13,718-vertex body submodel. Using build_corpus_model() here would measure the
+        # wrong topology and the assertion would silently stop testing anything.
         topology=TopologyConfig(base_mesh="makehuman", remove_unattached_vertices=False)
     )
     out = model()
