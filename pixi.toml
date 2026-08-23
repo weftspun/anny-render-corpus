@@ -45,3 +45,52 @@ mitsuba = "==3.9.1"
 # The check the Blender blocklist entry demands of any replacement, as a task rather than a
 # paragraph somebody has to remember to run.
 render-view = "python render_view.py"
+
+# THE RESTYLE ENVIRONMENT, SEPARATE FROM THE RENDER ONE ON PURPOSE.
+#
+# RFD 107a rule 2 restyles a render four ways, and two of those come from Qwen-Image-Edit: a
+# 20B editor that needs torch, diffusers and a 4-bit quantiser. None of that belongs in the
+# render environment, which is a measuring instrument pinned to one Mitsuba and should not
+# move because a diffusion library did.
+#
+# It is a feature rather than a second undeclared venv, which is the whole point of the rule
+# CLAUDE.md states: the Hailo session installed twenty packages one ModuleNotFoundError at a
+# time and left nothing behind that described them.
+#
+# WHY THIS RUN EXISTS AT ALL. The pixal3d README records bnb 4-bit Qwen-Image producing
+# camera-correct but noise-corrupted images across every software combination tried, with
+# torch 2.4.1 the one constant, and says to retest on torch >= 2.6 before relying on it. This
+# environment is that retest, so the torch version is the experiment rather than an incidental
+# choice.
+# NO CONDA PILLOW IN THIS ENVIRONMENT, AND THE REASON IS A DLL, NOT A PREFERENCE.
+#
+# The render environment takes numpy and pillow from conda-forge. Inheriting those here breaks
+# on import: torchvision ships its own DLLs and shadows the libs conda's `_imaging.pyd` links
+# against, so `import torchvision` is followed by
+#
+#   ImportError: DLL load failed while importing _imaging: The operating system cannot run %1.
+#
+# while `import torch; from PIL import Image` is fine. Measured both ways rather than guessed.
+# So this environment declares no default feature and takes its numpy and pillow from PyPI,
+# where the wheels carry their own DLLs and cannot disagree with torchvision's.
+[feature.restyle.dependencies]
+python = "3.11.*"
+
+[feature.restyle.pypi-dependencies]
+numpy = ">=2.0"
+pillow = ">=10.0"
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cu128" }
+# torchvision is not optional despite nothing here doing vision transforms: Qwen2VLProcessor
+# builds a Qwen2VLVideoProcessor at load, which hard-requires it. Discovered by the pipeline
+# failing at from_pretrained, which is the cheap place to find it.
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu128" }
+# Unpinned deliberately: the lockfile is where the version lives, and a pin here would repeat
+# a derivation the solver already does. The bound is the one the retest is about.
+diffusers = "*"
+transformers = "*"
+accelerate = "*"
+bitsandbytes = "*"
+
+[environments]
+restyle = { features = ["restyle"], no-default-feature = true }
+
