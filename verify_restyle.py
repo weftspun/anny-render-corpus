@@ -27,12 +27,39 @@ DELTA = 25.0          # distance from background, in 0..255 RGB
 CONTROL_SHIFT = 20    # px
 
 
+def _fill_from_border(free):
+    """Flood the background inward from the border; whatever is unreached is enclosed.
+
+    THE THIRD WAY THIS CHECK HAS BEEN WRONG. A fixed threshold failed on ukiyo-e, which lifts
+    the background; a background-relative threshold then failed on line art, where the figure's
+    INTERIOR is the same white as the paper and only the strokes register. Scoring the outline
+    of a drawing against a filled silhouette gave 0.393 for a sketch whose pose was correct.
+    Background is what connects to the border, so the fill is the definition rather than a
+    patch: enclosed white is body, surrounding white is paper.
+    """
+    h, w = free.shape
+    seen = np.zeros_like(free)
+    stack = [(0, x) for x in range(w) if free[0, x]] + [(h - 1, x) for x in range(w) if free[h - 1, x]]
+    stack += [(y, 0) for y in range(h) if free[y, 0]] + [(y, w - 1) for y in range(h) if free[y, w - 1]]
+    for y, x in stack:
+        seen[y, x] = True
+    while stack:
+        y, x = stack.pop()
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w and free[ny, nx] and not seen[ny, nx]:
+                seen[ny, nx] = True
+                stack.append((ny, nx))
+    return ~seen
+
+
 def body_mask(path, size=SIZE):
     a = np.asarray(Image.open(path).convert("RGB").resize((size, size), Image.BICUBIC)).astype(np.float32)
     edge = np.concatenate([a[:8].reshape(-1, 3), a[-8:].reshape(-1, 3),
                            a[:, :8].reshape(-1, 3), a[:, -8:].reshape(-1, 3)])
     bg = np.median(edge, 0)
-    return np.linalg.norm(a - bg, axis=2) > DELTA, bg
+    near_bg = np.linalg.norm(a - bg, axis=2) <= DELTA
+    return _fill_from_border(near_bg), bg
 
 
 def reference(exr, size=SIZE):

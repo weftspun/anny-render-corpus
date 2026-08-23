@@ -93,4 +93,40 @@ bitsandbytes = "*"
 
 [environments]
 restyle = { features = ["restyle"], no-default-feature = true }
+omnigen2 = { features = ["omnigen2"], no-default-feature = true }
+
+# OMNIGEN2, AND IT GETS ITS OWN ENVIRONMENT BECAUSE UPSTREAM PINS AGAINST THE OTHER ONE.
+#
+# Rule 2 needs an image editor that could plausibly run on the 8 GB Hailo-10H rather than only
+# on a 24 GB desktop card. Qwen-Image-Edit is 20.4B, about 10.5 GB even at NF4, so it cannot
+# fit; OmniGen2 is 7.8B across a 4B transformer and a 3.7B Qwen2.5-VL, roughly 4.3 GB at NF4.
+# Apache-2.0 in the weights and in the code repo both, checked separately, because a permissive
+# tag on one half says nothing about the other.
+#
+# The pins are UPSTREAM'S OWN, from their requirements.txt at 18e6f9d: torch 2.6.0 and
+# transformers 4.51.3. The restyle feature runs torch 2.11 and transformers 5.15, which those
+# contradict, so this is a second environment rather than a widened first one. That is the
+# lesson from the Qwen packaging session written down: nineteen fixes went into reconstructing
+# an environment the authors already published, and the cheaper move is to use theirs.
+#
+# no-default-feature for the same DLL reason as the restyle environment.
+[feature.omnigen2.dependencies]
+python = "3.11.*"
+
+[feature.omnigen2.pypi-dependencies]
+torch = { version = "==2.6.0", index = "https://download.pytorch.org/whl/cu124" }
+torchvision = { version = "==0.21.0", index = "https://download.pytorch.org/whl/cu124" }
+transformers = "==4.51.3"
+diffusers = "*"
+accelerate = "*"
+timm = "*"
+einops = "*"
+opencv-python-headless = "*"
+scipy = "*"
+omegaconf = "*"
+python-dotenv = "*"
+numpy = ">=2.0"
+pillow = ">=10.0"
+sentencepiece = "*"
+protobuf = "*"
 
