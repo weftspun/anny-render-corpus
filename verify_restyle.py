@@ -18,6 +18,7 @@ and must score badly, or this says nothing about a body that moved.
 import argparse
 import glob
 import os
+import pathlib
 
 import numpy as np
 from PIL import Image
@@ -62,12 +63,32 @@ def body_mask(path, size=SIZE):
     return _fill_from_border(near_bg), bg
 
 
-def reference(exr, size=SIZE):
-    import mitsuba as mi
-    mi.set_variant("scalar_rgb")
-    bmp = mi.Bitmap(exr)
-    names = [c.name for c in bmp.struct_()]
-    alpha = (np.array(bmp)[..., names.index("A")] > 0.5).astype(np.uint8) * 255
+def reference(lottie, view, size=SIZE):
+    """Ground truth from the render's own depth, read out of the Lottie that carries it.
+
+    This used to open an OpenEXR and take its `A` channel, which needed Mitsuba imported purely
+    to decode a file. The renderer writes one Lottie now, with each view's depth embedded as a
+    data-URI PNG whose RGBA8 holds the float32 bit pattern, so the dependency goes away and the
+    numbers are the same ones.
+
+    THE MATTE IS DERIVED RATHER THAN STORED. Depth is metres from the camera and the renderer
+    writes 0 where no ray hit, so `depth > 0` is the silhouette exactly -- no threshold to pick
+    and nothing to disagree with. That is why the Lottie carries no matte asset.
+    """
+    import base64
+    import io
+    import json
+
+    doc = json.loads(pathlib.Path(lottie).read_text(encoding="utf-8"))
+    tags = doc["meta"]["views"]
+    if view not in tags:
+        raise SystemExit(f"view {view!r} is not in {lottie}: has {tags}")
+    uri = next(a for a in doc["assets"] if a["id"] == f"depth_{tags.index(view)}")["p"]
+    px = np.asarray(Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1])))
+                    .convert("RGBA")).astype(np.uint32)
+    depth = (px[..., 0] | (px[..., 1] << 8) | (px[..., 2] << 16)
+             | (px[..., 3] << 24)).astype(np.uint32).view(np.float32)
+    alpha = ((depth > 0).astype(np.uint8) * 255)
     return np.asarray(Image.fromarray(alpha).resize((size, size), Image.NEAREST)) > 127
 
 
@@ -77,12 +98,15 @@ def iou(a, b):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exr", required=True, help="the render whose alpha is ground truth")
+    ap.add_argument("--lottie", required=True,
+                    help="the renderer's multiview Lottie, which carries the depth")
+    ap.add_argument("--view", default="three-quarter",
+                    help="which embedded viewpoint is ground truth")
     ap.add_argument("--dir", required=True, help="directory of restyled png to score")
     ap.add_argument("--floor", type=float, default=0.80)
     args = ap.parse_args()
 
-    ref = reference(args.exr)
+    ref = reference(args.lottie, args.view)
     shifted = np.zeros_like(ref)
     shifted[:, CONTROL_SHIFT:] = ref[:, :-CONTROL_SHIFT]
     control = iou(shifted, ref)

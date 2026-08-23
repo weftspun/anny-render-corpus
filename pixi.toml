@@ -94,6 +94,7 @@ bitsandbytes = "*"
 [environments]
 restyle = { features = ["restyle"], no-default-feature = true }
 omnigen2 = { features = ["omnigen2"], no-default-feature = true }
+editscore = { features = ["editscore"], no-default-feature = true }
 
 # OMNIGEN2, AND IT GETS ITS OWN ENVIRONMENT BECAUSE UPSTREAM PINS AGAINST THE OTHER ONE.
 #
@@ -132,4 +133,35 @@ numpy = ">=2.0"
 pillow = ">=10.0"
 sentencepiece = "*"
 protobuf = "*"
+
+# EDITSCORE, WHICH IS A VERIFIER RATHER THAN A GENERATOR, AND THAT DISTINCTION IS THE POINT.
+#
+# Rule 4 says each restyled frame is checked against its render and a failure is discarded. The
+# silhouette check in verify_restyle.py answers "did the body move" and nothing else; it cannot
+# say whether the edit followed its instruction. EditScore is a reward model trained for exactly
+# that judgement.
+#
+# Quantisation is permitted here where it is not for a generator. CLAUDE.md's condition 5 binds
+# generators, because a quantised generator writes labels that are lies. A verifier emits a
+# number about somebody else's frame, so nothing it produces enters a corpus -- but a quantised
+# verifier can still be WRONG, and a verifier that passes bad frames is worse than none, so the
+# 4-bit and bf16 scores get compared rather than assumed equal.
+#
+# It is a LoRA on Qwen/Qwen3-VL-4B-Instruct (Apache-2.0, ungated), 8.9 GB bf16 and about 2.5 GB
+# at NF4, which is what makes it a candidate for the UGen300's 8 GB at all.
+[feature.editscore.dependencies]
+python = "3.11.*"
+
+[feature.editscore.pypi-dependencies]
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu128" }
+editscore = "*"
+transformers = "*"
+accelerate = "*"
+peft = "*"
+bitsandbytes = "*"
+qwen-vl-utils = "*"
+json-repair = "*"
+pillow = ">=10.0"
+numpy = ">=2.0"
 

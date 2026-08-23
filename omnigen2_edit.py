@@ -1,9 +1,15 @@
-"""OmniGen2 at 4 bits, which is the run the 8 GB device question actually needs.
+"""OmniGen2 image editing, at the precision the destination allows.
 
-WHY THIS FILE EXISTS SEPARATELY FROM UPSTREAM'S inference.py. Upstream runs bf16, because they
-run on cards that hold it: measured here, bf16 peaks at 17.3 GiB. The Hailo-10H on the ASUS
-UGen300 has 8 GB, so the only version of this model that could ever land there is quantised,
-and the number that matters is the 4-bit one rather than the 4-bit estimate.
+bf16 IS THE DEFAULT BECAUSE QUANTISED WEIGHTS DO NOT PRODUCE CORPUS DATA. That is condition 5
+on generated synthetic in CLAUDE.md, and it is measured: the same edit, same seed, same
+guidance, scores 0.776 silhouette agreement at bf16 and 0.328 at NF4, because at four bits the
+photographic prompt stopped editing and started generating and the body turned around. The
+pixels were clean, so nothing about the frame looked wrong while all 104 of its keypoints were.
+
+NF4 REMAINS AVAILABLE, AND EVERY OUTPUT SAYS WHAT IT IS FOR. Quantisation for device
+qualification is a different activity: fitting this model into 6.72 GiB answers whether it
+clears the ASUS UGen300's 8 GB, and that is evidence about memory. So --precision nf4 works,
+and the provenance it writes carries corpus_eligible false. The rule is about destination.
 
 WHAT THIS DOES NOT SHOW. Fitting in 8 GB of a desktop card's VRAM is necessary and nowhere near
 sufficient for the accelerator: the model still has to compile through the Dataflow Compiler,
@@ -44,6 +50,8 @@ def main():
     ap.add_argument("--text-guidance", type=float, default=5.0)
     ap.add_argument("--image-guidance", type=float, default=2.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--precision", choices=["bf16", "nf4"], default="bf16",
+                    help="bf16 for anything that becomes corpus; nf4 only for device sizing")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     sys.path.insert(0, args.repo)
@@ -68,6 +76,10 @@ def main():
     from omnigen2.pipelines.omnigen2.pipeline_omnigen2 import OmniGen2Pipeline
     from omnigen2.models.transformers.transformer_omnigen2 import OmniGen2Transformer2DModel
 
+    quantised = args.precision == "nf4"
+    if quantised:
+        print("  NOTE  nf4: these outputs are device-sizing evidence, NOT corpus data "
+              "(CLAUDE.md, generated-synthetic condition 5)")
     nf4 = dict(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
 
@@ -75,11 +87,11 @@ def main():
     # Both halves quantised. The 4B transformer is the obvious one; leaving the 3.7B MLLM in
     # bf16 would put 7.4 GiB back and defeat the point.
     transformer = OmniGen2Transformer2DModel.from_pretrained(
-        args.model, subfolder="transformer", quantization_config=DiffusersBnb(**nf4),
-        torch_dtype=torch.bfloat16)
+        args.model, subfolder="transformer", torch_dtype=torch.bfloat16,
+        **({"quantization_config": DiffusersBnb(**nf4)} if quantised else {}))
     mllm = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        args.model, subfolder="mllm", quantization_config=TransformersBnb(**nf4),
-        torch_dtype=torch.bfloat16)
+        args.model, subfolder="mllm", torch_dtype=torch.bfloat16,
+        **({"quantization_config": TransformersBnb(**nf4)} if quantised else {}))
     # trust_remote_code, and what was actually trusted: the scheduler that ships in the weights
     # repo, 228 lines, importing only math, numpy, torch and diffusers -- no subprocess, no
     # network, no eval. It is the same file upstream's own inference.py executes; this path just
@@ -88,6 +100,8 @@ def main():
         args.model, transformer=transformer, mllm=mllm, torch_dtype=torch.bfloat16,
         trust_remote_code=True)
     pipe.vae.to("cuda")
+    if not quantised:
+        pipe.to("cuda")          # unquantised components are not placed by the loader
     load_s = time.time() - t0
 
     def gib(n):
@@ -97,7 +111,8 @@ def main():
     weights_gib = gib(torch.cuda.memory_allocated())
 
     src = Image.open(args.image).convert("RGB")
-    record = {"model": args.model, "quant": "nf4-double", "steps": args.steps,
+    record = {"model": args.model, "precision": args.precision,
+              "corpus_eligible": not quantised, "steps": args.steps,
               "text_guidance_scale": args.text_guidance, "image_guidance_scale": args.image_guidance,
               "seed": args.seed, "torch": torch.__version__,
               "weights_gib": round(weights_gib, 2), "outputs": {}}
@@ -112,7 +127,7 @@ def main():
                    negative_prompt="", num_images_per_prompt=1,
                    generator=torch.Generator(device="cuda").manual_seed(args.seed),
                    output_type="pil")
-        dst = os.path.join(args.out, f"omnigen2_{name}_nf4.png")
+        dst = os.path.join(args.out, f"omnigen2_{name}_{args.precision}.png")
         res.images[0].save(dst)
         peak = gib(torch.cuda.max_memory_allocated())
         record["outputs"][name] = {"file": os.path.basename(dst),
@@ -120,7 +135,7 @@ def main():
                                    "peak_vram_gib": round(peak, 2)}
         print(f"  ok   {dst}  {time.time()-t1:.0f}s  peak {peak:.2f} GiB")
 
-    with open(os.path.join(args.out, "omnigen2_provenance_nf4.json"), "w") as fh:
+    with open(os.path.join(args.out, f"omnigen2_provenance_{args.precision}.json"), "w") as fh:
         json.dump(record, fh, indent=2)
     print("provenance written")
 

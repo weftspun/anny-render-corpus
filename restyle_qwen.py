@@ -11,6 +11,13 @@ combination tried -- diffusers 0.35/0.36, model 2508/2511, cfg and Lightning -- 
 says to retest on torch >= 2.6 or with 8-bit before relying on it. The environment this runs
 in is that retest, which is why the manifest bounds torch rather than pinning it.
 
+NOTHING THIS SCRIPT PRODUCES IS CORPUS DATA, AND IT CANNOT BE. Qwen-Image-Edit is 57.7 GB of
+weights and needs roughly 38 GB at bf16 against this desk's 24 GB card, so it only runs here
+quantised -- and CLAUDE.md's generated-synthetic condition 5 says quantised weights do not
+produce corpus data. This file is therefore a measurement instrument: it establishes what the
+model does at 4 bits, which is speckle every pixel. Its provenance records corpus_eligible
+false so that a later reader does not have to reconstruct this paragraph.
+
 PROVENANCE, because a generated corpus needs it. The model id and the resolved commit are
 written next to every output, so the corpus can say what made it. Nothing here is training
 data yet -- this is one frame, to see whether the path works at all.
@@ -76,9 +83,12 @@ def main():
     pipe.enable_model_cpu_offload()
     load_s = time.time() - t0
     print(f"loaded in {load_s:.0f}s, {args.bits}-bit")
+    print("  NOTE  quantised: device/behaviour evidence only, NOT corpus data "
+          "(CLAUDE.md, generated-synthetic condition 5)")
 
     src = Image.open(args.image).convert("RGB")
-    record = {"model": REPO, "bits": int(args.bits), "steps": args.steps,
+    record = {"model": REPO, "bits": int(args.bits), "corpus_eligible": False,
+              "steps": args.steps,
               "true_cfg_scale": args.cfg, "seed": args.seed, "negative_prompt": args.negative,
               "torch": torch.__version__, "outputs": {}}
     try:                                    # the commit is the half of provenance that pins it
