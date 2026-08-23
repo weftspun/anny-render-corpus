@@ -45,3 +45,123 @@ mitsuba = "==3.9.1"
 # The check the Blender blocklist entry demands of any replacement, as a task rather than a
 # paragraph somebody has to remember to run.
 render-view = "python render_view.py"
+
+# THE RESTYLE ENVIRONMENT, SEPARATE FROM THE RENDER ONE ON PURPOSE.
+#
+# RFD 107a rule 2 restyles a render four ways, and two of those come from Qwen-Image-Edit: a
+# 20B editor that needs torch, diffusers and a 4-bit quantiser. None of that belongs in the
+# render environment, which is a measuring instrument pinned to one Mitsuba and should not
+# move because a diffusion library did.
+#
+# It is a feature rather than a second undeclared venv, which is the whole point of the rule
+# CLAUDE.md states: the Hailo session installed twenty packages one ModuleNotFoundError at a
+# time and left nothing behind that described them.
+#
+# WHY THIS RUN EXISTS AT ALL. The pixal3d README records bnb 4-bit Qwen-Image producing
+# camera-correct but noise-corrupted images across every software combination tried, with
+# torch 2.4.1 the one constant, and says to retest on torch >= 2.6 before relying on it. This
+# environment is that retest, so the torch version is the experiment rather than an incidental
+# choice.
+# NO CONDA PILLOW IN THIS ENVIRONMENT, AND THE REASON IS A DLL, NOT A PREFERENCE.
+#
+# The render environment takes numpy and pillow from conda-forge. Inheriting those here breaks
+# on import: torchvision ships its own DLLs and shadows the libs conda's `_imaging.pyd` links
+# against, so `import torchvision` is followed by
+#
+#   ImportError: DLL load failed while importing _imaging: The operating system cannot run %1.
+#
+# while `import torch; from PIL import Image` is fine. Measured both ways rather than guessed.
+# So this environment declares no default feature and takes its numpy and pillow from PyPI,
+# where the wheels carry their own DLLs and cannot disagree with torchvision's.
+[feature.restyle.dependencies]
+python = "3.11.*"
+
+[feature.restyle.pypi-dependencies]
+numpy = ">=2.0"
+pillow = ">=10.0"
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cu128" }
+# torchvision is not optional despite nothing here doing vision transforms: Qwen2VLProcessor
+# builds a Qwen2VLVideoProcessor at load, which hard-requires it. Discovered by the pipeline
+# failing at from_pretrained, which is the cheap place to find it.
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu128" }
+# Unpinned deliberately: the lockfile is where the version lives, and a pin here would repeat
+# a derivation the solver already does. The bound is the one the retest is about.
+diffusers = "*"
+transformers = "*"
+accelerate = "*"
+bitsandbytes = "*"
+
+[environments]
+restyle = { features = ["restyle"], no-default-feature = true }
+omnigen2 = { features = ["omnigen2"], no-default-feature = true }
+editscore = { features = ["editscore"], no-default-feature = true }
+
+# OMNIGEN2, AND IT GETS ITS OWN ENVIRONMENT BECAUSE UPSTREAM PINS AGAINST THE OTHER ONE.
+#
+# Rule 2 needs an image editor that could plausibly run on the 8 GB Hailo-10H rather than only
+# on a 24 GB desktop card. Qwen-Image-Edit is 20.4B, about 10.5 GB even at NF4, so it cannot
+# fit; OmniGen2 is 7.8B across a 4B transformer and a 3.7B Qwen2.5-VL, roughly 4.3 GB at NF4.
+# Apache-2.0 in the weights and in the code repo both, checked separately, because a permissive
+# tag on one half says nothing about the other.
+#
+# The pins are UPSTREAM'S OWN, from their requirements.txt at 18e6f9d: torch 2.6.0 and
+# transformers 4.51.3. The restyle feature runs torch 2.11 and transformers 5.15, which those
+# contradict, so this is a second environment rather than a widened first one. That is the
+# lesson from the Qwen packaging session written down: nineteen fixes went into reconstructing
+# an environment the authors already published, and the cheaper move is to use theirs.
+#
+# no-default-feature for the same DLL reason as the restyle environment.
+[feature.omnigen2.dependencies]
+python = "3.11.*"
+
+[feature.omnigen2.pypi-dependencies]
+torch = { version = "==2.6.0", index = "https://download.pytorch.org/whl/cu124" }
+torchvision = { version = "==0.21.0", index = "https://download.pytorch.org/whl/cu124" }
+transformers = "==4.51.3"
+diffusers = "*"
+accelerate = "*"
+# Not in upstream's requirements: they run bf16 on cards that hold it. NF4 is what the 8 GB
+# device question needs, so the quantiser is ours to add.
+bitsandbytes = "*"
+timm = "*"
+einops = "*"
+opencv-python-headless = "*"
+scipy = "*"
+omegaconf = "*"
+python-dotenv = "*"
+numpy = ">=2.0"
+pillow = ">=10.0"
+sentencepiece = "*"
+protobuf = "*"
+
+# EDITSCORE, WHICH IS A VERIFIER RATHER THAN A GENERATOR, AND THAT DISTINCTION IS THE POINT.
+#
+# Rule 4 says each restyled frame is checked against its render and a failure is discarded. The
+# silhouette check in verify_restyle.py answers "did the body move" and nothing else; it cannot
+# say whether the edit followed its instruction. EditScore is a reward model trained for exactly
+# that judgement.
+#
+# Quantisation is permitted here where it is not for a generator. CLAUDE.md's condition 5 binds
+# generators, because a quantised generator writes labels that are lies. A verifier emits a
+# number about somebody else's frame, so nothing it produces enters a corpus -- but a quantised
+# verifier can still be WRONG, and a verifier that passes bad frames is worse than none, so the
+# 4-bit and bf16 scores get compared rather than assumed equal.
+#
+# It is a LoRA on Qwen/Qwen3-VL-4B-Instruct (Apache-2.0, ungated), 8.9 GB bf16 and about 2.5 GB
+# at NF4, which is what makes it a candidate for the UGen300's 8 GB at all.
+[feature.editscore.dependencies]
+python = "3.11.*"
+
+[feature.editscore.pypi-dependencies]
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu128" }
+editscore = "*"
+transformers = "*"
+accelerate = "*"
+peft = "*"
+bitsandbytes = "*"
+qwen-vl-utils = "*"
+json-repair = "*"
+pillow = ">=10.0"
+numpy = ">=2.0"
+
