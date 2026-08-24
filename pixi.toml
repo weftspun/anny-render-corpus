@@ -117,6 +117,10 @@ anny = { features = ["anny"], no-default-feature = true }
 python = "3.11.*"
 
 [feature.omnigen2.pypi-dependencies]
+# The reference photographs live in zstd parquet with the bytes in-row, so the generator
+# needs pyarrow to read one. Declared rather than discovered as a ModuleNotFoundError after
+# the model has already loaded 17 GiB of weights.
+pyarrow = ">=15"
 torch = { version = "==2.6.0", index = "https://download.pytorch.org/whl/cu124" }
 torchvision = { version = "==0.21.0", index = "https://download.pytorch.org/whl/cu124" }
 transformers = "==4.51.3"
@@ -182,6 +186,8 @@ numpy = ">=2.0"
 [feature.corpus.dependencies]
 python = "3.11.*"
 pyarrow = ">=15"
+# Corpus rows carry image bytes, so anything that opens one needs pillow.
+pillow = ">=10"
 pandas = ">=2.0"
 numpy = ">=2.0"
 
