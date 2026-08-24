@@ -88,8 +88,29 @@ def main():
     # 262144 is 512x512, which is `image_max_pixels` in EditScore's own training config. Our
     # renders are 1024x1024, four times the pixels and therefore four times the vision tokens --
     # which is where the peak goes when weights are only 6.3 GiB and the peak is 8.6.
-    ap.add_argument("--max-pixels", type=int, default=0,
-                    help="downscale each image to at most this many pixels (0 = leave alone)")
+    # 262144 IS 512x512 AND IT IS THE DEFAULT BECAUSE THE ALTERNATIVE DOES NOT FIT. The
+    # previous default was 0 -- leave the image alone -- which on our 1024x1024 renders peaks
+    # at 8.60 GiB against the UGen300's 8 GB. A default that cannot deploy is the same defect
+    # as RFDETRKeypointPreview shipping num_windows=2, which exports the graph the compiler
+    # refuses: in both cases the configuration somebody gets by not choosing is the one that
+    # fails, and it fails somewhere far from here.
+    #
+    #     512x512   6.75 GiB peak   fits
+    #     1024x1024 8.60 GiB peak   does not
+    #
+    # The vision tokens are the budget, not the weights: patch 16 with merge 2 is one token
+    # per 32x32 pixels, so 256 tokens at 512 against 1024 at 1024.
+    #
+    # A NOTE ON WHERE 512 CAME FROM, because this file used to assert more than it knew. The
+    # comment below said 512 is `image_max_pixels` in EditScore's own training config. That
+    # config is not in the wheel and not in the cached repo -- the adapter is a LoRA config
+    # with no image settings, and the base model declares 256x256 to 4096x4096. So 512 is
+    # chosen here because it FITS, which is measured, and any claim about what EditScore was
+    # trained at needs the paper rather than this comment.
+    ap.add_argument("--max-pixels", type=int, default=262144,
+                    help="downscale each image to at most this many pixels "
+                         "(default 262144 = 512x512, the configuration that fits 8 GB; "
+                         "0 disables the limit and will not fit)")
     args = ap.parse_args()
 
     if args.precision == "nf4":
