@@ -10,3 +10,10 @@ __pycache__/
 # Drive folder cannot be a manifest <project> and what satisfies the Sides rule is an index
 # in git rather than the bytes.
 coco_images_train2017/
+
+# The pixi environments. Covered today only by `.pixi/.gitignore`, which PIXI WRITES and
+# which reads `*` then `!config.toml` -- so the tool's own file is the only thing keeping
+# gigabytes of solved environment out, and it deliberately un-ignores one path inside.
+# Pinned here so the rule survives the directory being recreated, and so it is visible in
+# a diff rather than in a generated file nobody reviews.
+.pixi/
