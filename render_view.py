@@ -107,13 +107,28 @@ def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, varia
     import drjit as dr
     import mitsuba as mi
 
+    # METAL IS REACHABLE AND IS DELIBERATELY NOT IN THE FALLBACK ORDER.
+    #
+    # This list read ("llvm_ad_rgb", "cuda_ad_rgb", "scalar_rgb"), so on Apple silicon it fell
+    # through to the CPU and no caller could ask for anything else. Mitsuba 3.9.1 enumerates
+    # `metal_ad_rgb` here, and on this film it is worth 60x: 545 ms/image against 32,592 for
+    # llvm at one thread, measured by `logbook/scripts/mi_bench_llvm.py` on an M2 Pro.
+    #
+    # It is still not the default, and the reason is measured rather than cautious. Three
+    # renders of this scene at a PINNED seed produced three different sha256 digests, so the
+    # divergence is GPU accumulation order and not a seed artefact. A corpus renderer that
+    # cannot reproduce a frame is not a corpus renderer, whatever it costs.
+    #
+    # So `--variant metal_ad_rgb` reaches it for anything that does not need reproducibility --
+    # a preview, a look test, a cheap sanity render -- and the default order still lands on the
+    # variant the determinism measurement covers. The point is that the choice is now a choice.
     for v in ([variant] if variant else ("llvm_ad_rgb", "cuda_ad_rgb", "scalar_rgb")):
         if v in mi.variants():
             mi.set_variant(v)
             break
     # One thread is what makes this bit-reproducible: parallel llvm and cuda each differ run
-    # to run by up to 1/255 on a dozen pixels of a million. DRJIT_NUM_THREADS in the
-    # environment does not do it; this call does.
+    # to run by up to 1/255 on a dozen pixels of a million, and metal differs at any thread
+    # count. DRJIT_NUM_THREADS in the environment does not do it; this call does.
     if threads:
         dr.set_thread_count(threads)
 
@@ -234,6 +249,8 @@ def main(argv):
     ap.add_argument("--offset", type=float, nargs=2, default=(0.0, 0.0))
     ap.add_argument("--spp", type=int, default=128)
     ap.add_argument("--threads", type=int, default=1)
+    # `metal_ad_rgb` is accepted and is NOT reproducible -- see the note in render(). Anything
+    # writing corpus data wants the default.
     ap.add_argument("--variant", default="llvm_ad_rgb")
     a = ap.parse_args(argv[1:])
 
