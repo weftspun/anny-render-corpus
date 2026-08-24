@@ -88,6 +88,52 @@ LOCAL_CHANGES = pa.schema([
     ("name", pa.string()),              # ANNY local_changes / corrective blendshape name
 ])
 
+TOPOLOGIES = pa.schema([
+    ("topology_id", pa.int8()),
+    ("name", pa.string()),              # "makehuman" (basemesh), "anny" (body submodel)
+    ("vertex_count", pa.int32()),       # 19158 basemesh, 13718 body
+])
+
+# WHY A KEYPOINT NEEDS A DEFINITION RELATION AT ALL, AND WHY BONE_ID COULD NOT STAY.
+#
+# KEYPOINTS_2D used to key on `bone_id`, which quietly asserts that every keypoint is driven by
+# a bone. The nose and both ears are not: they have NO BONE and are fixed mesh vertices, so
+# under the old shape there was nowhere to put three of the points the corpus exists to label.
+# The schema did not reject them, it could not express them, which is the worse failure of the
+# two -- nothing would have errored.
+#
+# So a keypoint gets an identity of its own, and how it is ANCHORED moves into two satellite
+# relations rather than into nullable columns beside it. ETNF is the reason and it is not
+# decoration here: a `bone_id` that is -1 for "vertex-anchored instead" is a sentinel standing
+# in for a different relation, and the next reader has to know which values are real.
+KEYPOINT_DEFS = pa.schema([
+    ("keypoint_id", pa.int16()),
+    ("name", pa.string()),              # "nose", "left_ear", "left_shoulder", ...
+])
+
+# Satellite one: the keypoint follows a bone.
+KEYPOINT_BONE_ANCHOR = pa.schema([
+    ("keypoint_id", pa.int16()),
+    ("bone_id", pa.int16()),
+])
+
+# Satellite two: the keypoint is a fixed vertex, and TOPOLOGY_ID IS WHAT MAKES IT MEAN
+# ANYTHING. A vertex_id is an index into one particular mesh. ANNY's two topologies share
+# ZERO vertices -- measured in both directions, 19,158 basemesh against 13,718 body -- so a
+# bare vertex_id is not merely ambiguous between them, it is wrong in one of them by an amount
+# nothing detects. That is why this is a foreign key and not a label: a label can be forgotten,
+# and a foreign key fails the validator.
+#
+# It is also the interface `coco.pth` sits on. Its weight vectors are 19,158 wide, which is
+# basemesh space, while `topology="anny"` returns the 13,718-vertex body. Multiplying one by
+# the other does not fail loudly, it fails at a vertex index, which is PITFALLS 1 -- bugs live
+# at interfaces, and this one has a name now.
+KEYPOINT_VERTEX_ANCHOR = pa.schema([
+    ("keypoint_id", pa.int16()),
+    ("topology_id", pa.int8()),
+    ("vertex_id", pa.int32()),
+])
+
 LICENSES = pa.schema([
     ("license_id", pa.int16()),
     ("name", pa.string()),              # "CC-BY-4.0", "Apache-2.0", ...
@@ -225,7 +271,10 @@ RENDER_DATA = pa.schema([
 # trade, and they are regenerable from POSE_ROTATIONS + CAMERAS if ever suspect.
 KEYPOINTS_2D = pa.schema([
     ("render_id", pa.int64()),
-    ("bone_id", pa.int16()),
+    # `keypoint_id` rather than `bone_id`. Three of the 104 points -- the nose and both ears --
+    # have no bone at all, so keying on one made them inexpressible. How a point is anchored
+    # lives in KEYPOINT_BONE_ANCHOR / KEYPOINT_VERTEX_ANCHOR, which is where topology_id enters.
+    ("keypoint_id", pa.int16()),
     ("x", pa.float32()), ("y", pa.float32()),
     # int8, NOT bool. Three independent reasons, each sufficient:
     #
@@ -261,6 +310,10 @@ SEGMENTATION = pa.schema([
 # with no second store to keep in step.
 MESHES = pa.schema([
     ("render_id", pa.int64()),
+    # Same argument as the vertex anchor, one level up: a mesh's vertex order IS a topology, and
+    # a consumer that reads this geometry to look up a vertex_id has to know which of the two it
+    # got. Recording it costs one byte and removes a guess.
+    ("topology_id", pa.int8()),
     ("geometry", pa.binary()),          # USD, per RFD 0053
 ])
 
@@ -348,6 +401,9 @@ RELATIONS = {
     "motion_clips": MOTION_CLIPS, "poses": POSES, "pose_rotations": POSE_ROTATIONS,
     "environments": ENVIRONMENTS, "scenes": SCENES, "cameras": CAMERAS,
     "render_runs": RENDER_RUNS, "renders": RENDERS, "render_data": RENDER_DATA,
+    "topologies": TOPOLOGIES, "keypoint_defs": KEYPOINT_DEFS,
+    "keypoint_bone_anchor": KEYPOINT_BONE_ANCHOR,
+    "keypoint_vertex_anchor": KEYPOINT_VERTEX_ANCHOR,
     "keypoints_2d": KEYPOINTS_2D, "segmentation": SEGMENTATION,
     "meshes": MESHES,
     "edit_models": EDIT_MODELS, "edit_prompts": EDIT_PROMPTS,
@@ -380,6 +436,13 @@ FOREIGN_KEYS = [
     ("renders", "run_id", "render_runs", "run_id"),
     ("render_data", "render_id", "renders", "render_id"),
     ("keypoints_2d", "render_id", "renders", "render_id"),
+    ("keypoints_2d", "keypoint_id", "keypoint_defs", "keypoint_id"),
+    ("keypoint_bone_anchor", "keypoint_id", "keypoint_defs", "keypoint_id"),
+    ("keypoint_bone_anchor", "bone_id", "bones", "bone_id"),
+    ("keypoint_vertex_anchor", "keypoint_id", "keypoint_defs", "keypoint_id"),
+    ("keypoint_vertex_anchor", "topology_id", "topologies", "topology_id"),
+    ("meshes", "render_id", "renders", "render_id"),
+    ("meshes", "topology_id", "topologies", "topology_id"),
     ("source_datasets", "license_id", "licenses", "license_id"),
     # Condition 1, as integrity rather than as a promise. An edited image whose
     # run, model or prompt has gone missing fails here instead of entering a

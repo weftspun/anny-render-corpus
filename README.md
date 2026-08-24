@@ -19,7 +19,7 @@ python test_preflight.py <corpus> # red/green: prove every check can fail
 
 | file | what it does |
 |---|---|
-| `anny_render_schema.py` | <!--claim:schema_relations=24 tol=0.5-->24 ETNF relations, <!--claim:schema_foreign_keys=22 tol=0.5-->22 foreign keys, `validate()`, deterministic ids |
+| `anny_render_schema.py` | <!--claim:schema_relations=28 tol=0.5-->28 ETNF relations, <!--claim:schema_foreign_keys=29 tol=0.5-->29 foreign keys, `validate()`, deterministic ids |
 | `anny_rig.py` | **the canonical model.** Every stage builds from here, never bare `anny.Anny` |
 | `sample_identities.py` | 23,000 identities (22,511 train / 489 val) |
 | `preflight_audit.py` | 29 semantic/physical checks; gates the render run |
