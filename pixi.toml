@@ -29,7 +29,14 @@ name = "dataflow-coco-gemx"
 version = "0.1.0"
 description = "ANNY render corpus: poses in, labelled frames out"
 channels = ["conda-forge"]
-platforms = ["win-64", "linux-64"]
+# `osx-arm64` is here so the RENDER environment can be instantiated on the Mac, and it is
+# deliberately NOT inherited by the CUDA features below. The renderer's shipping variant is
+# `llvm_ad_rgb` at one thread -- a CPU path -- so the deterministic corpus render is portable
+# and the generator environments are not: their torch comes from `download.pytorch.org/whl/cu128`
+# and `whl/cu124`, which serve no Apple silicon wheels. Each of those features restates the
+# platform list, so the manifest says which desk can hold which work and `pixi install` fails
+# loudly rather than a person finding out after a model download.
+platforms = ["win-64", "linux-64", "osx-arm64"]
 
 [dependencies]
 python = "3.11.*"
@@ -40,6 +47,20 @@ pillow = ">=10.0"
 # Pinned exactly. The renderer is a measuring instrument, and an instrument that changes
 # version between two runs has made the two runs incomparable.
 mitsuba = "==3.9.1"
+
+# DR.JIT FINDS ITS OWN LLVM ON WINDOWS AND LINUX AND NOT ON MACOS, so the path is declared
+# rather than left to a person to export. `llvm_ad_rgb` is the SHIPPING variant -- the one the
+# determinism measurement above pinned -- and without this it does not load at all:
+#
+#   ImportError: jit_init_thread_state(): the LLVM backend is inactive because the LLVM shared
+#   library ("libLLVM.dylib") could not be found!
+#
+# There is no libLLVM.dylib on a stock macOS: Xcode ships none at a linkable path and Homebrew
+# was absent here. So `libllvm20` is a declared osx-arm64 dependency and this points at it,
+# which is the same rule the `uv` blocklist entry states -- an environment nothing declares is
+# an environment nobody can rebuild.
+[target.osx-arm64.activation.env]
+DRJIT_LIBLLVM_PATH = "$CONDA_PREFIX/lib/libLLVM.20.1.dylib"
 
 [tasks]
 # The check the Blender blocklist entry demands of any replacement, as a task rather than a
@@ -73,6 +94,11 @@ render-view = "python render_view.py"
 # while `import torch; from PIL import Image` is fine. Measured both ways rather than guessed.
 # So this environment declares no default feature and takes its numpy and pillow from PyPI,
 # where the wheels carry their own DLLs and cannot disagree with torchvision's.
+[feature.restyle]
+# CUDA wheels only, so this feature is not offered on the Mac. Restating the platform
+# list here is what makes the exclusion a solver error rather than a paragraph.
+platforms = ["win-64", "linux-64"]
+
 [feature.restyle.dependencies]
 python = "3.11.*"
 
@@ -98,6 +124,9 @@ editscore = { features = ["editscore"], no-default-feature = true }
 corpus = { features = ["corpus"], no-default-feature = true }
 anny = { features = ["anny"], no-default-feature = true }
 
+[target.osx-arm64.dependencies]
+libllvm20 = ">=20.1.8,<21"
+
 # OMNIGEN2, AND IT GETS ITS OWN ENVIRONMENT BECAUSE UPSTREAM PINS AGAINST THE OTHER ONE.
 #
 # Rule 2 needs an image editor that could plausibly run on the 8 GB Hailo-10H rather than only
@@ -113,6 +142,11 @@ anny = { features = ["anny"], no-default-feature = true }
 # an environment the authors already published, and the cheaper move is to use theirs.
 #
 # no-default-feature for the same DLL reason as the restyle environment.
+[feature.omnigen2]
+# CUDA wheels only, so this feature is not offered on the Mac. Restating the platform
+# list here is what makes the exclusion a solver error rather than a paragraph.
+platforms = ["win-64", "linux-64"]
+
 [feature.omnigen2.dependencies]
 python = "3.11.*"
 
@@ -155,6 +189,11 @@ protobuf = "*"
 #
 # It is a LoRA on Qwen/Qwen3-VL-4B-Instruct (Apache-2.0, ungated), 8.9 GB bf16 and about 2.5 GB
 # at NF4, which is what makes it a candidate for the UGen300's 8 GB at all.
+[feature.editscore]
+# CUDA wheels only, so this feature is not offered on the Mac. Restating the platform
+# list here is what makes the exclusion a solver error rather than a paragraph.
+platforms = ["win-64", "linux-64"]
+
 [feature.editscore.dependencies]
 python = "3.11.*"
 
@@ -220,6 +259,12 @@ coco-download = "python download_coco_images.py"
 # the eleven tagged claims in README.md report ModuleNotFoundError rather than a number, and
 # why `interface_audit.py`'s expression check cannot run: it reads
 # `model.facial_action_labels` and reports UNCHECKED when it cannot.
+[feature.anny]
+# Same exclusion, different reason: this feature takes torch from `whl/cpu`, which serves
+# linux and windows wheels only. macOS arm64 torch lives on the default PyPI index, so
+# offering `anny` here would need a second, mac-scoped feature rather than a wider list.
+platforms = ["win-64", "linux-64"]
+
 [feature.anny.dependencies]
 python = "3.11.*"
 
