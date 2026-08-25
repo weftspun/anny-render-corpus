@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,65 @@ def hf_token(item="rkuylld4umpmaxvlvbp5q7kgii"):
                  "cannot prompt from here and reports promptError instead. stderr: %s"
                  % out.stderr.strip()[:160])
     return token
+
+
+# A drive-letter or home-directory path anywhere in a string, not only at its start.
+ABSOLUTE_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/c/Users/|/Users/)[^\s\"']*", re.IGNORECASE)
+
+
+def basename_paths(value):
+    """Reduce any string that looks like a local path to its filename, recursively.
+
+    The measurement JSONs record which frame they measured, and they recorded it the way the
+    run received it: as a full path. `source_frame` and `frame` are the two that carry it, but
+    naming those two fields would leave the next field somebody adds. Walking the structure
+    catches them all, and `refuse_if_absolute` is what proves the walk was complete.
+    """
+    if isinstance(value, dict):
+        return {k: basename_paths(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [basename_paths(v) for v in value]
+    if isinstance(value, str):
+        # NOT ONLY WHOLE-STRING PATHS. The first version of this checked `startswith`, and a
+        # path survived inside a sentence: "no person detected in C:\...\az045_A.png at
+        # threshold 0.3" is an error message, not a path field, and it disclosed a home
+        # directory just as effectively. Substitution inside the string is what catches both.
+        return ABSOLUTE_RE.sub(lambda m: m.group(0).replace(chr(92), "/").rsplit("/", 1)[-1],
+                               value)
+    return value
+
+
+def copy_json_sanitised(src, dst):
+    dst.write_text(json.dumps(basename_paths(json.loads(src.read_text(encoding="utf-8"))),
+                              indent=2), encoding="utf-8")
+
+
+def refuse_if_absolute(root):
+    """No published file may name a local filesystem.
+
+    An absolute path in a dataset is two defects wearing one string: it discloses whose
+    machine made the file, and it points somewhere the reader does not have, so the record is
+    inert for everyone but us. This runs over the staged tree after the rewrites, because the
+    rewrite is the thing that could silently miss a field.
+    """
+    hits = []
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.suffix.lower() in (".png", ".safetensors"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for marker in (chr(67) + chr(58) + chr(92), "C:/", "/c/Users", "/Users/"):
+            if marker in text:
+                hits.append((str(p.relative_to(root)), marker))
+                break
+    if hits:
+        for rel, marker in hits[:8]:
+            print("  ABSOLUTE %-52s contains %r" % (rel, marker))
+        sys.exit("FAIL  %d staged file(s) still name a local path. Publishing them would "
+                 "disclose a home directory and hand the reader a record that points at a "
+                 "filesystem they do not have." % len(hits))
 
 
 def refuse_if_forbidden(paths):
@@ -103,18 +163,45 @@ def stage_dataset(grid, corpus, ladders, out):
         elif p.name.endswith((".depth.png", ".pose.png")):
             shutil.copy2(p, out / "controls" / p.name); counts["controls"] += 1
 
+    # PATHS ARE REWRITTEN RELATIVE TO THE DATASET ROOT, and this is not cosmetic. The
+    # trainer needs absolute paths on the machine that runs it, so the local records carry
+    # them and are correct there. Published, the same string is two defects at once: it names
+    # a user's home directory, and it points at a filesystem the reader does not have, so the
+    # dataset is unusable by anyone who downloads it. The local copy keeps absolutes; the
+    # published copy gets `renders/<name>`.
     corpus = pathlib.Path(corpus)
-    for name in ("train_formA.jsonl", "val_formA.jsonl", "mix_formA.yml", "edit_formA.yml"):
+    for name in ("train_formA.jsonl", "val_formA.jsonl"):
         src = corpus / name
         if src.is_file():
-            shutil.copy2(src, out / "records" / name); counts["records"] += 1
+            rows = []
+            for line in src.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                r["input_images"] = ["renders/" + os.path.basename(q)
+                                     for q in r.get("input_images", [])]
+                r["output_image"] = "renders/" + os.path.basename(r["output_image"])
+                rows.append(json.dumps(r))
+            (out / "records" / name).write_text(chr(10).join(rows) + chr(10), encoding="utf-8")
+            counts["records"] += 1
+
+    # The two YAML files named an absolute JSONL. Rewritten to sit beside their records, so a
+    # reader can point the trainer at the folder they downloaded rather than at ours.
+    (out / "records" / "edit_formA.yml").write_text(
+        "data:" + chr(10) + "  - " + chr(10) + "    path: 'train_formA.jsonl'" + chr(10)
+        + "    type: 'edit'" + chr(10) + "    ratio: !!float 1.0" + chr(10), encoding="utf-8")
+    (out / "records" / "mix_formA.yml").write_text(
+        "# ratio is inert in this trainer; the mix is controlled by row counts." + chr(10)
+        + "data:" + chr(10) + "  - " + chr(10) + "    path: 'edit_formA.yml'" + chr(10)
+        + "    type: 'edit'" + chr(10) + "    ratio: !!float 1.0" + chr(10), encoding="utf-8")
+    counts["records"] += 2
 
     for label, d in ladders.items():
         d = pathlib.Path(d)
         for name in ("ladder.json", "azimuth_recovery_A.json", "omnigen2_bench.json"):
             src = d / name
             if src.is_file():
-                shutil.copy2(src, out / "measurements" / ("%s_%s" % (label, name)))
+                copy_json_sanitised(src, out / "measurements" / ("%s_%s" % (label, name)))
                 counts["measurements"] += 1
     return out, counts
 
@@ -144,7 +231,7 @@ def stage_generated(ladders, out):
         for name in ("ladder.json", "azimuth_recovery_A.json", "omnigen2_bench.json"):
             src = d / name
             if src.is_file():
-                shutil.copy2(src, sub / name)
+                copy_json_sanitised(src, sub / name)
         counts[label] = len(images)
     return out, counts
 
@@ -318,8 +405,19 @@ the driver pages into shared memory rather than failing.
 ## Contents
 
 `adapter_model.safetensors` carries the **304 trained tensors, 19.52 MiB**. The trainer's own
-checkpoint is 14.8 GiB because it saves the whole model under FSDP; the base weights are not
-ours to redistribute and are not here.
+checkpoint is 14.8 GiB because it saves the whole model under FSDP, and 866 of those tensors
+are the base model unchanged.
+
+## The base weights
+
+Load this against [`OmniGen2/OmniGen2`](https://huggingface.co/OmniGen2/OmniGen2) at revision
+`df5dca8a981d74e6c3af214c145f5c735fe72367`. That exact revision is also mirrored at
+[`chibifire/omnigen2-base-df5dca8a`](https://huggingface.co/chibifire/omnigen2-base-df5dca8a),
+unmodified and Apache-2.0, so a cited revision stays fetchable if upstream moves. Use upstream
+when you can; the mirror is the fallback.
+
+An adapter is deltas against a base it cannot function without, so the pair is only useful
+together.
 """ % (SOURCE_REPO, SOURCE_SIDE)
 
 
@@ -384,6 +482,8 @@ def main() -> int:
     files = [p for p in stage.rglob("*") if p.is_file()]
     refuse_if_forbidden(files)
 
+    refuse_if_absolute(stage)
+    refuse_if_absolute(gen_stage)
     (stage / "README.md").write_text(dataset_card(counts), encoding="utf-8")
     (stage / "CITATION.cff").write_text(citation("dataset"), encoding="utf-8")
 
@@ -421,14 +521,17 @@ def main() -> int:
 
     api.create_repo(ds, repo_type="dataset", private=private, exist_ok=True)
     api.upload_folder(folder_path=str(stage), repo_id=ds, repo_type="dataset",
-                      commit_message="Camera-controlled ANNY renders, and the measurements")
+                      delete_patterns="*",
+                      commit_message="Relative paths, so the records work off this machine")
     gen = "%s/%s" % (args.namespace, GENERATED_REPO)
     api.create_repo(gen, repo_type="dataset", private=private, exist_ok=True)
     api.upload_folder(folder_path=str(gen_stage), repo_id=gen, repo_type="dataset",
+                      delete_patterns="*",
                       commit_message="OmniGen2 outputs, manifested apart from the renders")
 
     api.create_repo(md, repo_type="model", private=private, exist_ok=True)
     api.upload_folder(folder_path=str(adapter), repo_id=md, repo_type="model",
+                      delete_patterns="*",
                       commit_message="Camera-control LoRA, 304 trained tensors")
 
     # READ IT BACK. A push that reported success and a repository that serves the files are

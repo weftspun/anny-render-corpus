@@ -85,7 +85,11 @@ def main() -> int:
     # keeps the adapter loadable by anything that is not this trainer.
     config = {
         "peft_type": "LORA",
-        "task_type": None,
+        # A STRING, BECAUSE null FAILS THE HUB'S OWN VALIDATOR. It read `None`, which is what
+        # PEFT itself accepts for a diffusion transformer, and Hugging Face answered
+        # `"peft.task_type" must be a string` on the model page. FEATURE_EXTRACTION is the
+        # member of PEFT's TaskType that fits a transformer with no language-modelling head.
+        "task_type": "FEATURE_EXTRACTION",
         "base_model_name_or_path": args.base,
         "r": args.rank,
         "lora_alpha": args.rank,
