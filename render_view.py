@@ -69,9 +69,29 @@ def sphere_hammersley(i, num_samples, offset=(0.0, 0.0)):
     return phi, theta
 
 
-def camera(i, views, fov_deg, offset):
-    yaw, pitch = sphere_hammersley(i, views, offset)
-    radius = math.sqrt(3) / 2 / math.sin(math.radians(fov_deg) / 2)
+def camera(i, views, fov_deg, offset, distance=1.0, direction=None):
+    """The sequence's direction, and the derived radius scaled by `distance`.
+
+    THE HEADER'S WARNING IS ABOUT A FREE RADIUS, NOT ABOUT THIS. Passing a radius and a fov
+    as unrelated parameters puts the object in a corner, which is why the radius is derived.
+    A multiplier keeps the derivation and moves the camera along the same ray, so the subject
+    fills more or less of the frame and nothing floats. 1.0 is the derived radius exactly and
+    the frame it renders is unchanged.
+
+    The factor exists because the camera vocabulary has a distance axis and the sequence does
+    not: close-up is 0.6, medium is 1.0 and wide is 1.8.
+    """
+    # An explicit direction is the grid's entry point and it BYPASSES the sequence rather
+    # than steering it. The two generators answer different questions -- the sequence covers
+    # a sphere with no view chosen, the grid puts a known camera beside a known phrase -- and
+    # a caller that passes a direction is asking for the second. The sidecar says which one
+    # produced the frame, because a grid render carrying the sequence's name in its
+    # provenance is a lie that survives.
+    if direction is None:
+        yaw, pitch = sphere_hammersley(i, views, offset)
+    else:
+        yaw, pitch = math.radians(direction[0]), math.radians(direction[1])
+    radius = math.sqrt(3) / 2 / math.sin(math.radians(fov_deg) / 2) * distance
     eye = np.array([math.cos(yaw) * math.cos(pitch),
                     math.sin(yaw) * math.cos(pitch),
                     math.sin(pitch)]) * radius
@@ -103,7 +123,8 @@ def vertex_normals(verts, faces):
     return (n / ln).astype(np.float32), int(orphan.sum())
 
 
-def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, variant):
+def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, variant,
+           distance=1.0, direction=None):
     import drjit as dr
     import mitsuba as mi
 
@@ -136,7 +157,7 @@ def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, varia
     verts, centre, scale = normalise(np.asarray(data["verts"], dtype=np.float64))
     faces = np.asarray(data["faces"], dtype=np.int64)
     normals, orphans = vertex_normals(verts, faces)
-    eye, yaw, pitch, radius = camera(index, views, fov_deg, offset)
+    eye, yaw, pitch, radius = camera(index, views, fov_deg, offset, distance, direction)
 
     mesh = mi.Mesh("body", vertex_count=verts.shape[0], face_count=faces.shape[0],
                    has_vertex_normals=True, has_vertex_texcoords=False)
@@ -222,10 +243,11 @@ def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, varia
 
     digest = hashlib.sha256(pathlib.Path(out_png).read_bytes()).hexdigest()
     side = {
-        "generator": "sphere_hammersley_sequence, TencentARC/Pixal3D @ cdbb2bb",
+        "generator": ("sphere_hammersley_sequence, TencentARC/Pixal3D @ cdbb2bb"
+                      if direction is None else "explicit direction, not the sequence"),
         "index": index, "views": views, "offset": list(offset),
         "yaw_rad": yaw, "pitch_rad": pitch, "pitch_deg": math.degrees(pitch),
-        "yaw_deg": math.degrees(yaw), "radius": radius,
+        "yaw_deg": math.degrees(yaw), "radius": radius, "distance_factor": distance,
         "fov_deg": fov_deg, "camera_angle_x_rad": math.radians(fov_deg),
         "eye": [float(x) for x in eye],
         "normalisation": {"centre": [float(x) for x in centre], "scale": scale},
@@ -246,6 +268,8 @@ def main(argv):
     ap.add_argument("--index", type=int, default=0)
     ap.add_argument("--views", type=int, default=8)
     ap.add_argument("--fov", type=float, default=40.0, help="degrees; radius follows from it")
+    ap.add_argument("--distance", type=float, default=1.0,
+                    help="multiplies the derived radius; 0.6 close-up, 1.0 medium, 1.8 wide")
     ap.add_argument("--offset", type=float, nargs=2, default=(0.0, 0.0))
     ap.add_argument("--spp", type=int, default=128)
     ap.add_argument("--threads", type=int, default=1)
@@ -255,9 +279,10 @@ def main(argv):
     a = ap.parse_args(argv[1:])
 
     s = render(a.mesh_npz, pathlib.Path(a.out_png), a.index, a.views, a.fov,
-               tuple(a.offset), a.spp, a.threads, a.variant)
+               tuple(a.offset), a.spp, a.threads, a.variant, a.distance)
     print(f"  view {a.index}/{a.views}  yaw {s['yaw_deg']:7.2f}  pitch {s['pitch_deg']:6.2f}  "
-          f"radius {s['radius']:.3f}  fov {s['fov_deg']}  sha256 {s['sha256'][:12]}...")
+          f"radius {s['radius']:.3f}  fov {s['fov_deg']}  distance {s['distance_factor']}  "
+          f"sha256 {s['sha256'][:12]}...")
     return 0
 
 
