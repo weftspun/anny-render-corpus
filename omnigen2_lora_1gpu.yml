@@ -1,0 +1,161 @@
+# OmniGen2 camera-control LoRA, on one RTX 3090.
+#
+# WHY THIS FILE EXISTS RATHER THAN options/ft_lora.yml. Upstream's config cannot run here.
+# `train.py:368-375` asserts `batch_size * gradient_accumulation_steps * num_processes ==
+# global_batch_size`, and `scripts/train/ft_lora.sh:46` hardcodes `num_processes=$((WORLD_SIZE
+# * 8))`, so its `global_batch_size: 16` with `batch_size: 2` requires exactly eight GPUs or
+# the run aborts on the assert before it loads anything. Every difference below is either that
+# arithmetic, a memory decision, or a licence one, and each is stated.
+#
+# WHAT IT IS TRAINING, AND WHY. Asked for eight camera azimuths in plain language, OmniGen2
+# returned a body that did not turn: recovered azimuth tracked the request with a slope of
+# 0.04, and six of eight views came back between -1 and -11 degrees whatever was asked. Only
+# the back view worked. fal's Multiple-Angles LoRA exists because Qwen-Image-Edit had the same
+# gap, and closed it with 3000+ synthetic renders with exact camera control. This is that,
+# from ANNY.
+
+name: anny_camera_lora_1gpu
+
+seed: 2233
+device_specific_seed: true
+workder_specific_seed: true
+
+data:
+  # Written by `write_omnigen2_jsonl.py` from a rendered camera grid. Absolute paths, because
+  # the trainer's working directory is upstream's checkout and not ours.
+  data_path: C:/Users/ernes/Desktop/omnigen2-camera-lora/mix_formA.yml
+  use_chat_template: true
+  maximum_text_tokens: 888
+  prompt_dropout_prob: !!float 0.0001
+
+  # UPSTREAM DROPS THE REFERENCE IMAGE HALF THE TIME AND THAT IS WRONG FOR THIS TASK.
+  # `ref_img_dropout_prob` only fires when the prompt was already dropped, so it is CFG
+  # unconditional training rather than augmentation -- but a camera-control LoRA whose whole
+  # signal is "this view, from that view" learns nothing from a sample with no source image.
+  # Lowered rather than zeroed, so some unconditional signal survives for guidance.
+  ref_img_dropout_prob: !!float 0.1
+
+  # 512 SQUARE, NOT 1024. There is no training VRAM figure anywhere in upstream's tree -- every
+  # number they publish is inference. The best available proxy is their own RL fork, which on
+  # 8x80 GB at rank 32 drops to 512 square across every input and output. Inference alone puts
+  # 14.76 GiB of bf16 weights on this 24 GiB card, so 1024 square with activations is not a
+  # starting guess worth making. Raise it once a step is measured to fit.
+  # 256 SQUARE, AND THE STEP DOWN FROM 512 IS A MEASUREMENT RATHER THAN CAUTION. At 512 the
+  # card sat at 24.3 GiB of 24.5 and did not complete a single optimizer step in twelve
+  # minutes -- no OOM, because Windows WDDM pages into shared memory instead of failing, which
+  # is the same silent failure TaylorSeer hit at inference. The arithmetic says why: the frozen
+  # transformer is 14.76 GiB in bf16 and `train.py:255` puts Qwen2.5-VL-3B on the same device
+  # in bf16 as well, roughly 7 GiB, to encode prompts of about thirty tokens. That is ~22 GiB
+  # before a single activation.
+  max_output_pixels: 65536           # 256 * 256
+  max_input_pixels: [65536, 65536, 65536, 65536]
+  max_side_length: 1024
+
+model:
+  # THE LICENCE FIX, AND IT IS A GATE. Upstream hardcodes
+  # `black-forest-labs/FLUX.1-dev`, whose VAE is under the FLUX.1-dev Non-Commercial License,
+  # and CLAUDE.md blocklists FLUX.1. OmniGen2's own repository ships a `vae/` subfolder --
+  # AutoencoderKL, 16 latent channels, scaling 0.3611, shift 0.1159 -- under Apache-2.0, and
+  # `train.py:246-249` loads it with `subfolder=` anyway. So this points at OmniGen2 and the
+  # run never reaches for FLUX.
+  #
+  # WHAT THIS DOES NOT SETTLE, SAID PLAINLY: whether those tensors originate from FLUX's VAE.
+  # Checking would mean downloading the blocklisted weights to compare, which is the thing the
+  # entry forbids. What is true is that nothing here fetches from black-forest-labs, and that
+  # OmniGen2 redistributes this file under Apache-2.0.
+  pretrained_vae_model_name_or_path: OmniGen2/OmniGen2
+  vae_subfolder: vae
+  pretrained_text_encoder_model_name_or_path: Qwen/Qwen2.5-VL-3B-Instruct
+  pretrained_model_path: OmniGen2/OmniGen2
+
+  arch_opt:
+    patch_size: 2
+    in_channels: 16
+    hidden_size: 2520
+    num_layers: 32
+    num_refiner_layers: 2
+    num_attention_heads: 21
+    num_kv_heads: 7
+    multiple_of: 256
+    norm_eps: !!float 1e-05
+    axes_dim_rope: [40, 40, 40]
+    axes_lens: [10000, 10000, 10000]
+    text_feat_dim: 2048
+    timestep_scale: !!float 1000
+
+transport:
+  snr_type: lognorm
+  do_shift: true
+  dynamic_time_shift: true
+
+train:
+  # THE ASSERT, SATISFIED FOR ONE PROCESS: 1 * 8 * 1 == 8. Upstream's 2 * 1 * 8 == 16 needs
+  # eight GPUs. The effective batch is kept at 8 through accumulation rather than through
+  # data parallelism, so the gradient is comparable even though the hardware is not.
+  global_batch_size: 8
+  batch_size: 1
+  gradient_accumulation_steps: 8
+
+  # 95 records from one grid, so an epoch is 95 samples and 4000 steps at batch 8 would be
+  # over 300 epochs of one subject. This is a PROVING run: it measures hours per epoch, peak
+  # VRAM and every format bug while re-rendering is still cheap. The step count goes up when
+  # the corpus does, not before.
+  max_train_steps: 200
+
+  dataloader_num_workers: 2
+
+  # UPSTREAM'S 8e-7 IS A FULL-FINETUNE RATE AND `docs/FINETUNE.md:28` SAYS TO RAISE IT FOR
+  # LoRA. Their own RL fork runs 4e-4 at rank 32. 1e-4 sits between the two and is the number
+  # to revisit first if 200 steps move nothing.
+  learning_rate: !!float 1e-4
+  scale_lr: false
+  lr_scheduler: timm_constant_with_warmup
+  warmup_t: 20
+  warmup_lr_init: 1e-8
+  warmup_prefix: true
+  t_in_epochs: false
+
+  # bitsandbytes AdamW. LoRA already keeps the optimizer state small, but on a card that holds
+  # 14.76 GiB of frozen weights before a single activation, the cheap saving is worth taking.
+  use_8bit_adam: true
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_weight_decay: !!float 0.01
+  adam_epsilon: !!float 1e-08
+  max_grad_norm: 1
+
+  gradient_checkpointing: true
+  set_grads_to_none: true
+
+  allow_tf32: false
+  mixed_precision: 'bf16'
+  ema_decay: 0.0
+
+  # RANK 8 IS UPSTREAM'S DEFAULT AND alpha IS NOT CONFIGURABLE HERE. `train.py:267` sets
+  # `lora_alpha=args.train.lora_rank`, so alpha always equals rank and a `lora_alpha:` key in
+  # this file would be read by nobody. Their RL fork does honour it, at rank 32 alpha 64. If
+  # this run underfits, alpha is a source patch and not a config change.
+  #
+  # `target_modules` is likewise hardcoded to ["to_k","to_q","to_v","to_out.0"] at
+  # `train.py:262` -- attention only, no FFN.
+  lora_ft: true
+  lora_rank: 8
+  lora_dropout: 0
+
+val:
+  validation_steps: 50
+  train_visualization_steps: 25
+
+logger:
+  # No wandb: this desk has no run to log to and a missing key would stop the run at step 0.
+  log_with: [tensorboard]
+
+  # CHECKPOINTS SAVE THE WHOLE MODEL, NOT THE ADAPTER. `docs/FINETUNE.md:80-81` records this
+  # as an FSDP limitation, so every checkpoint is a full 7.8B model on disk and
+  # `convert_ckpt_to_hf_format.py` extracts the LoRA afterwards. Two of them is already tens
+  # of gigabytes, which is why the limit is set rather than left open.
+  checkpointing_steps: 100
+  checkpoints_total_limit: 2
+
+cache_dir:
+resume_from_checkpoint: latest

@@ -189,6 +189,21 @@ protobuf = "*"
 #
 # It is a LoRA on Qwen/Qwen3-VL-4B-Instruct (Apache-2.0, ungated), 8.9 GB bf16 and about 2.5 GB
 # at NF4, which is what makes it a candidate for the UGen300's 8 GB at all.
+# TRAINING, NOT INFERENCE, AND THESE FOUR WERE THE WHOLE GAP. `train.py` imports `peft` for
+# `LoraConfig` at line 265 and `matplotlib` at the top, and a run configured to log to
+# tensorboard needs it present or accelerate raises at step 0 rather than at the end. wandb is
+# deliberately absent: this desk has no run to log to, and the config asks for tensorboard only.
+peft = "*"
+matplotlib = "*"
+tensorboard = "*"
+# The transport module imports it at `omnigen2/transport/integrators.py:2`, so the trainer
+# cannot even parse its config without it. Inference never touches that path, which is why an
+# inference-only environment got this far without noticing.
+torchdiffeq = "*"
+# `omnigen2_train_dataset.py` reads every JSONL through `datasets.load_dataset("json", ...)`
+# and concatenates the shards, which is also why all shards in one mix must share an Arrow
+# schema: a t2i row lacking `input_images` beside an edit row that has it will not unify.
+datasets = "*"
 [feature.editscore]
 # CUDA wheels only, so this feature is not offered on the Mac. Restating the platform
 # list here is what makes the exclusion a solver error rather than a paragraph.
@@ -285,6 +300,13 @@ python = "3.11.*"
 anny = "*"
 numpy = ">=2.0"
 torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
+# DECLARED, BECAUSE THE ALTERNATIVE WAS AN UNDECLARED INSTALL. The azimuth gate detects
+# keypoints and then fits ANNY to them, and until now `rfdetr` lived only in
+# `rf-detr-cpp/.pixi/envs/gate` while `anny` lived only here, so the two halves of one
+# measurement could not run in one process. Adding it to a feature is a line in a diff;
+# pip-installing it into an env nothing declares is the failure the `uv` blocklist entry
+# describes. Torch above is the CPU index and rfdetr follows it rather than pulling its own.
+rfdetr = "*"
 
 [feature.anny.tasks]
 # Reads ANNY's own facial action labels and compares them against ARKit's 52 by NAME, in

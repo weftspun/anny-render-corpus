@@ -94,3 +94,26 @@ of this repo builds.
 
 Tracked as issues, not prose — see this repo's issue list. Critical path is **#1**
 (100STYLE bind-orientation correction) → poses → scenes → rung 0 of the render ladder.
+
+## Licence
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+`SPDX-License-Identifier: Apache-2.0 OR MIT`
+
+This covers the **code** in this repository. It does not relicense the data the scripts
+ingest or the models they drive, each of which keeps its own terms: COCO images are filtered
+to commercial-and-derivatives-safe licences by `filter_coco_licenses.py`, and OmniGen2,
+EditScore and RF-DETR are Apache-2.0 upstream. Anything generated here records the
+checkpoint that produced it, per CLAUDE.md's condition 1.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
+in this work by you shall be dual licensed as above, without any additional terms or
+conditions.
