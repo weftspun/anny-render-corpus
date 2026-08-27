@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<canvas id="c"></canvas>
+<script type="importmap">
+{ "imports": {
+  "three": "./node_modules/three/build/three.module.js",
+  "three/webgpu": "./node_modules/three/build/three.webgpu.js",
+  "three/tsl": "./node_modules/three/build/three.tsl.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { MToonMaterial } from './node_modules/@pixiv/three-vrm-materials-mtoon/lib/three-vrm-materials-mtoon.module.js';
+
+const P = Object.fromEntries(new URLSearchParams(location.search));
+const num = (k, d) => (P[k] !== undefined ? Number(P[k]) : d);
+const N = num('res', 128);
+
+THREE.ColorManagement.enabled = false;
+
+const canvas = document.getElementById('c');
+canvas.width = N; canvas.height = N;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false,
+                                           preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(N, N, false);
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.setClearColor(0x000000, 1);
+
+const scene = new THREE.Scene();
+// Orthographic and exactly unit-framed, so pixel (u,v) has normal (u, v, sqrt(1-u^2-v^2)).
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+camera.position.set(0, 0, 3);
+camera.lookAt(0, 0, 0);
+
+const material = new MToonMaterial({
+  color: new THREE.Color(num('base_r', 0.72), num('base_g', 0.52), num('base_b', 0.32)),
+  shadeColorFactor: new THREE.Color(num('shade_r', 0.30), num('shade_g', 0.21),
+                                    num('shade_b', 0.13)),
+  shadingShiftFactor: num('shift', 0.0),
+  shadingToonyFactor: num('toony', 0.9),
+  giEqualizationFactor: num('gi', 0.0),
+  parametricRimColorFactor: new THREE.Color(num('rim_r', 0), num('rim_g', 0), num('rim_b', 0)),
+  parametricRimLiftFactor: num('rim_lift', 0.0),
+  parametricRimFresnelPowerFactor: num('rim_power', 1.0),
+  rimLightingMixFactor: num('rim_mix', 0.0),
+  outlineWidthFactor: 0.0,
+});
+
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1, 256, 256), material));
+
+const light = new THREE.DirectionalLight(0xffffff, num('intensity', 1.0));
+light.position.set(num('light_x', 1.0), num('light_y', 0.2), num('light_z', 0.6));
+light.target.position.set(0, 0, 0);
+scene.add(light); scene.add(light.target);
+
+renderer.render(scene, camera);
+
+const gl = renderer.getContext();
+const buf = new Uint8Array(N * N * 4);
+gl.readPixels(0, 0, N, N, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+
+window.RESULT = JSON.stringify({
+  res: N,
+  three: THREE.REVISION,
+  light: [light.position.x, light.position.y, light.position.z],
+  pixels: Array.from(buf),
+});
+window.DONE = true;
+</script>

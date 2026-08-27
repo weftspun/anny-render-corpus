@@ -168,6 +168,35 @@ Assets that ship with the basemesh: the UV'd `base.obj`, a 2048 square `sss.png`
 Blender shader graphs and Blender is blocklisted for reproducibility, so the shading has to be
 re-authored as a Mitsuba BSDF rather than loaded.
 
+## The shading model, checked against the reference
+
+`mtoon.py` implements MToon 1.0 and is held against `@pixiv/three-vrm` pixel for pixel, in
+headless Chromium, on a unit sphere under an orthographic camera framed so that pixel
+(u, v) carries normal (u, v, sqrt(1 - u^2 - v^2)). No plateau finding and no fitting.
+
+| shadingToonyFactor | px compared | over 4/255 | p99 | max |
+| ------------------ | ----------- | ---------- | ------ | ------ |
+| 0.9                | 3048        | 0          | 0.0020 | 0.0025 |
+| 0.5                | 3048        | 0          | 0.0020 | 0.0021 |
+| 0.0                | 3048        | 0          | 0.0020 | 0.0021 |
+| 1.0                | 3048        | 2          | 0.0018 | 0.1351 |
+
+One 8-bit readback step is 0.0039, so three of the four agree below the noise floor. The two
+pixels at a hard ramp are the terminator rather than the model: a tessellated normal
+disagrees with the analytic one by a hair and the step turns that into the whole base-to-shade
+gap, which over pi is 0.1337 against the 0.1351 measured.
+
+**THE ONE REAL DIFFERENCE IS A FACTOR OF 1/PI.** Unscaled, their pixels over ours is a
+near-constant 0.3167 to 0.3183 against 1/pi = 0.31831, flat across every toony value. The
+VRM 1.0 pseudocode ends `color = color * lightColor` with no such term and three.js applies
+the Lambertian convention to direct light, so a corpus rendered with our integrator sits pi
+times brighter than the same material in a three-vrm viewer.
+
+That is not cosmetic here. The tone ladder solves for a dE between plateaus and CIELAB is
+not scale invariant, so the same material at two exposures does not give the same dE. The
+targets have to be verified at the exposure the viewer uses rather than at ours, and that
+check does not exist yet.
+
 ## Constructed and generated, kept apart
 
 Renders, depth maps and pose skeletons are **constructed**: deterministic from assets held
@@ -190,6 +219,9 @@ generated output as `anny-render-corpus-generated`, two repositories rather than
 | `uv_seams.py` | 22 | a naive per-vertex bind, a dropped V flip, a folded island, a non-deterministic split |
 | `check_anime_materials.py` | 5 | a flat shade multiplier, a light-only scale, an unreachable target silently clamped |
 | `compare_camera_obedience.py` | 4 | two slopes compared across different view sets |
+| `mtoon.py` | 11 | a ramp that drifted from the VRM 1.0 pseudocode |
+| `mtoon_integrator.py` | 8 | a render where the shade plateau never reaches film |
+| `check_mtoon_reference.py` | 5 | a port that disagrees with three-vrm beyond quantisation |
 | `check_controls.py` | — | depth and pose disagreeing with the render in pixels |
 | `check_view_selection.py` | — | a hand-picked subset of the sequence |
 | `preflight_audit.py` | 29 checks | a render run that should not start |
@@ -211,7 +243,10 @@ caught by at least two controls, none surviving.
    method that does not exist.
 4. **Provenance of published generated output.** `ladder/ladder.json` records 4 views against
    14 images in that directory, so 10 published images have no run record.
-5. **Skin tone in the render path.** The UV reaches the model and stops there; nothing samples
+5. **The exposure the tone targets are verified at.** The ladder solves in material space
+   and the renderer is pi times brighter than a three-vrm viewer, so the rendered dE has
+   not been checked at the exposure a viewer uses.
+9. **Skin tone in the render path.** The UV reaches the model and stops there; nothing samples
    it, so the anime tone layer has no renderer to drive yet.
 6. **Subsurface.** The scene material is `principled` with no subsurface, while an sss map
    ships unused. Dark and light albedos do not merely scale in brightness, so an albedo-only
