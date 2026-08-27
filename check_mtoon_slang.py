@@ -36,6 +36,12 @@ def library():
         _lib.mtoon_shade.argtypes = [ctypes.c_uint32] + [
             np.ctypeslib.ndpointer(np.float32, flags="C_CONTIGUOUS")] * 4
         _lib.mtoon_params_size.restype = ctypes.c_uint32
+        _lib.mtoon_srgb8.restype = None
+        _lib.mtoon_srgb8.argtypes = [
+            ctypes.c_uint32,
+            np.ctypeslib.ndpointer(np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(np.uint32, flags="C_CONTIGUOUS"),
+            ctypes.c_uint32]
     return _lib
 
 
@@ -66,6 +72,15 @@ def shade(dot_nl, dot_nv, base, shade_color, light_color=(1.0, 1.0, 1.0), **kw):
     return out.reshape(-1, 3)
 
 
+def srgb8(rgba, threads=0):
+    """Linear float RGBA to packed sRGB bytes, in the compiled kernel."""
+    src = np.ascontiguousarray(rgba, dtype=np.float32)
+    n = src.size // 4
+    out = np.empty(n, dtype=np.uint32)
+    library().mtoon_srgb8(n, src.reshape(-1), out, threads)
+    return out.view(np.uint8).reshape(rgba.shape[:-1] + (4,))
+
+
 def reference(dot_nl, dot_nv, base, shade_color, light_color=(1.0, 1.0, 1.0), **kw):
     return np.array([mtoon.evaluate(float(a), float(b), base, shade_color, light_color, **kw)[0]
                      for a, b in zip(np.ravel(dot_nl), np.ravel(dot_nv))])
@@ -94,7 +109,7 @@ def bench(n=1 << 22):
 
 
 def self_test():
-    """Eight controls. Four must reject a kernel that has drifted from the model."""
+    """Twelve controls. Four must reject a kernel that has drifted from the model."""
     r = []
     base, sh = (0.72, 0.52, 0.32), (0.30, 0.21, 0.13)
     nl = np.linspace(-1, 1, 401)
@@ -121,6 +136,21 @@ def self_test():
     wrong = reference(nl, nv, base, sh, shading_toony_factor=0.1)
     r.append(("a different parameter gives a different answer, so agreement is not vacuous",
               np.abs(shade(nl, nv, base, sh, shading_toony_factor=0.9) - wrong).max() > 0.01))
+
+    lin = np.stack(np.meshgrid(np.linspace(0, 1, 64), np.linspace(0, 1, 64)), -1)
+    quad = np.concatenate([lin, lin[..., :1], np.ones(lin.shape[:2] + (1,))], -1)
+    got = srgb8(quad.astype(np.float32))
+    c = np.clip(quad[..., :3], 0, 1)
+    want = np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+    want = np.clip(np.round(want * 255), 0, 255)
+    r.append(("the kernel's transfer function matches to one code",
+              int(np.abs(got[..., :3].astype(int) - want).max()) <= 1))
+    r.append(("alpha is carried through", int(got[..., 3].min()) == 255))
+    r.append(("threading changes nothing about the answer",
+              np.array_equal(srgb8(quad.astype(np.float32), threads=1), got)))
+    ends = srgb8(np.array([[[0., 0, 0, 0], [1., 1, 1, 1]]], dtype=np.float32))
+    r.append(("black and white land exactly",
+              list(ends[0, 0]) == [0, 0, 0, 0] and list(ends[0, 1]) == [255, 255, 255, 255]))
 
     tail = shade(np.zeros(65, np.float32), np.zeros(65, np.float32), base, sh)
     r.append(("a size past one thread group is fully written", not np.allclose(tail[64], 0)))

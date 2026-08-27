@@ -33,7 +33,8 @@ def frame_for(tone_base, shade_colour, width, height, spp=1, **kw):
 
 
 def tone_frames(hold):
-    """Each Monk tone held for `hold` frames at the dE 12 multiplier."""
+    """Each Monk tone held for `hold` frames at the dE 12 multiplier. Uniform by decision;
+    CORPUS_DESIGN.md carries why."""
     rows = []
     for tone in sweep.MST:
         base = sweep.linear_of(tone)
@@ -43,6 +44,34 @@ def tone_frames(hold):
     return rows
 
 
+# Q2-1 of the Nem x Mila survey, n=1,012.
+PERSONA_SHARE = {"humanoid": 50.0, "semi-humanoid": 38.0, "robot-or-cyborg": 6.0,
+                 "animal": 2.0, "plant": 2.0, "other": 1.0, "monster": 0.0}
+MIN_HOLD = 90
+
+
+def allocate(shares, total, floor=MIN_HOLD):
+    """Split `total` by share, never below `floor`. A zero share still gets the floor."""
+    names = list(shares)
+    if floor * len(names) > total:
+        raise ValueError("a floor of %d across %d categories needs %d frames, not %d"
+                         % (floor, len(names), floor * len(names), total))
+    out = {n: floor for n in names}
+    spare = total - floor * len(names)
+    mass = sum(max(0.0, shares[n]) for n in names)
+    if mass <= 0:
+        for i, n in enumerate(names):
+            out[n] += spare // len(names) + (1 if i < spare % len(names) else 0)
+        return out
+    exact = {n: spare * max(0.0, shares[n]) / mass for n in names}
+    for n in names:
+        out[n] += int(exact[n])
+    left = total - sum(out.values())
+    for n in sorted(names, key=lambda k: exact[k] - int(exact[k]), reverse=True)[:left]:
+        out[n] += 1
+    return out
+
+
 def sun(phase, arc=70.0, elevation=0.35):
     """The light swept through `arc` degrees, smoothstepped so it settles at both ends."""
     eased = phase * phase * (3.0 - 2.0 * phase)
@@ -50,12 +79,26 @@ def sun(phase, arc=70.0, elevation=0.35):
     return (float(np.cos(angle)), float(elevation), float(np.sin(angle)))
 
 
-def to_srgb8(rgba):
-    lin = np.clip(rgba[..., :3], 0.0, 1.0)
+_LUT_BITS = 14
+_LUT_N = 1 << _LUT_BITS
+
+
+def _build_lut():
+    lin = np.arange(_LUT_N, dtype=np.float64) / (_LUT_N - 1)
     srgb = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin ** (1 / 2.4) - 0.055)
-    out = np.zeros(rgba.shape[:2] + (4,), dtype=np.uint8)
-    out[..., :3] = np.round(srgb * 255).astype(np.uint8)
-    out[..., 3] = np.round(np.clip(rgba[..., 3], 0, 1) * 255).astype(np.uint8)
+    return np.round(srgb * 255).astype(np.uint8)
+
+
+_LUT = _build_lut()
+
+
+def to_srgb8(rgba):
+    """A table lookup, not a pow."""
+    lin = np.clip(rgba[..., :3], 0.0, 1.0)
+    idx = (lin * (_LUT_N - 1) + 0.5).astype(np.uint16)
+    out = np.empty(rgba.shape[:2] + (4,), dtype=np.uint8)
+    out[..., :3] = _LUT[idx]
+    out[..., 3] = (np.clip(rgba[..., 3], 0, 1) * 255 + 0.5).astype(np.uint8)
     return out
 
 
@@ -140,7 +183,7 @@ def render(stream, hold, width, height, spp=1, slots=8, flush_every=10, verbose=
 
 
 def self_test():
-    """Nine controls; four reject a frame not showing the material."""
+    """Seventeen controls; five reject a frame not showing the material."""
     r = []
     base = sweep.linear_of("825c43")
     dark = [c * sweep.solve_multiplier(base, 12.0) for c in base]
@@ -158,6 +201,21 @@ def self_test():
     r.append(("the flat multiplier renders a different frame",
               not np.allclose(frame, flat)))
 
+    got = allocate(PERSONA_SHARE, 900)
+    r.append(("every persona clears the floor", min(got.values()) >= MIN_HOLD))
+    r.append(("a zero-share persona still gets the floor",
+              got["monster"] == MIN_HOLD and PERSONA_SHARE["monster"] == 0.0))
+    r.append(("the frames all get spent", sum(got.values()) == 900))
+    r.append(("the largest share still gets the most",
+              max(got, key=got.get) == max(PERSONA_SHARE, key=PERSONA_SHARE.get)))
+    r.append(("uniform shares split evenly",
+              len(set(allocate({k: 1.0 for k in "abcd"}, 400, 10).values())) == 1))
+    try:
+        allocate(PERSONA_SHARE, 100, 30)
+        r.append(("a floor that cannot fit is refused", False))
+    except ValueError:
+        r.append(("a floor that cannot fit is refused", True))
+
     a, b = sun(0.0), sun(1.0)
     r.append(("the sun moves across the hold", abs(a[2] - b[2]) > 0.5))
     r.append(("the sweep is symmetric about the middle",
@@ -168,6 +226,12 @@ def self_test():
     eight = to_srgb8(frame)
     r.append(("the 8-bit conversion keeps the mask exactly",
               np.array_equal(eight[..., 3] > 127, hit)))
+    probe = np.linspace(0, 1, 4096, dtype=np.float64)
+    exact = np.where(probe <= 0.0031308, probe * 12.92, 1.055 * probe ** (1 / 2.4) - 0.055)
+    got = _LUT[(probe * (_LUT_N - 1) + 0.5).astype(np.uint16)]
+    r.append(("the lookup table matches the transfer function to one code",
+              int(np.abs(got.astype(int) - np.round(exact * 255)).max()) <= 1))
+    r.append(("black and white land exactly", _LUT[0] == 0 and _LUT[-1] == 255))
 
     bad = sum(1 for _, ok in r if not ok)
     for name, ok in r:

@@ -60,3 +60,31 @@ void shadeMain(uint3 tid : SV_DispatchThreadID,
     outColor[i * 3 + 1] = c.y;
     outColor[i * 3 + 2] = c.z;
 }
+
+float linearToSrgb(float c)
+{
+    c = saturate(c);
+    return c <= 0.0031308f ? c * 12.92f : 1.055f * pow(c, 1.0f / 2.4f) - 0.055f;
+}
+
+uint toByte(float v)
+{
+    return (uint)clamp(v * 255.0f + 0.5f, 0.0f, 255.0f);
+}
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void srgbMain(uint3 tid : SV_DispatchThreadID,
+              uniform StructuredBuffer<float> src,
+              uniform RWStructuredBuffer<uint> dst,
+              uniform StructuredBuffer<uint> count)
+{
+    uint i = tid.x;
+    if (i >= count[0])
+        return;
+    uint r = toByte(linearToSrgb(src[i * 4 + 0]));
+    uint g = toByte(linearToSrgb(src[i * 4 + 1]));
+    uint b = toByte(linearToSrgb(src[i * 4 + 2]));
+    uint a = toByte(saturate(src[i * 4 + 3]));
+    dst[i] = r | (g << 8) | (b << 16) | (a << 24);
+}

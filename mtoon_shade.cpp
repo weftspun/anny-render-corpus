@@ -4,8 +4,11 @@
 
 #include "mtoon_slang_gen.cpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -59,4 +62,41 @@ extern "C" SLANG_PRELUDE_SHARED_LIB_EXPORT
 uint32_t mtoon_params_size(void)
 {
     return uint32_t(sizeof(MToonParams_0));
+}
+
+extern "C" SLANG_PRELUDE_SHARED_LIB_EXPORT
+void mtoon_srgb8(uint32_t n, const float* rgba, uint32_t* out, uint32_t threads)
+{
+    EntryPointParams_1 ep;
+    ep.src_0 = ro(rgba, size_t(n) * 4);
+    ep.dst_0 = rw(out, n);
+    ep.count_1 = ro(&n, 1);
+
+    const uint32_t groups = (n + 63u) / 64u;
+    if (threads == 0)
+        threads = std::max(1u, std::thread::hardware_concurrency());
+    threads = std::min(threads, groups);
+
+    // The group loop inside srgbMain is serial, so one call uses one core on work that is
+    // per-pixel independent. The group range is the split.
+    auto run = [&](uint32_t lo, uint32_t hi) {
+        ComputeVaryingInput vi = {};
+        vi.startGroupID = uint3{lo, 0, 0};
+        vi.endGroupID = uint3{hi, 1, 1};
+        srgbMain(&vi, &ep, nullptr);
+    };
+    if (threads <= 1) {
+        run(0, groups);
+        return;
+    }
+    std::vector<std::thread> pool;
+    const uint32_t span = (groups + threads - 1) / threads;
+    for (uint32_t t = 0; t < threads; ++t) {
+        const uint32_t lo = t * span;
+        const uint32_t hi = std::min(groups, lo + span);
+        if (lo < hi)
+            pool.emplace_back(run, lo, hi);
+    }
+    for (auto& th : pool)
+        th.join();
 }
