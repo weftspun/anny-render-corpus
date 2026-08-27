@@ -38,10 +38,11 @@ references:
         given-names: "Masataka"
     url: "https://github.com/V-Sekai/godot-vrm/tree/master/addons/Godot-MToon-Shader"
     notes: >-
-      MIT. mtoon.py is a line-for-line port of calculateLighting() and the rim term from
-      mtoon_common.gdshaderinc, MToon 3.3. The ramp is
-      clamp((I - shadeShift) / (mix(1, shadeShift, shadeToony) - shadeShift), 0, 1), which is
-      the VRM0 parameterisation and not the VRM1.0 linearstep form an earlier draft used.
+      MIT. Read for the MToon 3.3 implementation, whose ramp is
+      clamp((I - shadeShift) / (mix(1, shadeShift, shadeToony) - shadeShift), 0, 1). mtoon.py
+      targeted that VRM0 form for one commit and now implements VRM1.0 instead; the two are
+      different parameterisations of the same idea and are recorded together so a reader who
+      finds the Godot source does not conclude this corpus follows it.
   - type: standard
     title: "VRMC_materials_mtoon-1.0"
     authors:

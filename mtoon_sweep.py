@@ -84,16 +84,17 @@ def run(out, res=128, target=12.0, verbose=True):
         mult = solve_multiplier(lit, target)
         shade = [c * mult for c in lit]
         material_de = mtoon.delta_e(lit, shade)
-        img = render_sphere(lit, shade, res=res, shade_toony=0.9, shade_shift=0.0)
+        img = render_sphere(lit, shade, res=res, shading_toony_factor=0.9, shading_shift_factor=0.0)
         hi, _ = plateaus(img)
-        rendered_de = mtoon.rendered_contrast(lit, shade, shade_toony=0.9, shade_shift=0.0)
+        rendered_de = mtoon.rendered_contrast(lit, shade, shading_toony_factor=0.9, shading_shift_factor=0.0)
         rows.append((i, hexs, mult, material_de, rendered_de))
         if verbose:
             print("  MST %2d  x%.4f   material dE %5.2f   rendered dE %5.2f"
                   % (i, mult, material_de, rendered_de))
     if out:
         pathlib.Path(out).mkdir(parents=True, exist_ok=True)
-        ramp = np.array([[mtoon.light_intensity(x, s, t)
+        ramp = np.array([[mtoon.shading(x, shading_shift_factor=s,
+                                          shading_toony_factor=t)
                           for x in np.linspace(-1, 1, 64)]
                          for t in TOONY for s in SHIFT])
         np.save(pathlib.Path(out) / "ramps.npy", ramp)
@@ -106,13 +107,13 @@ def self_test():
     lit = linear_of("d7bd96")
     shade = [c * 0.4 for c in lit]
 
-    img = render_sphere(lit, shade, res=64, shade_toony=1.0, shade_shift=0.0)
+    img = render_sphere(lit, shade, res=64, shading_toony_factor=1.0, shading_shift_factor=0.0)
     hi, lo = plateaus(img)
     r.append(("the sphere renders something", hi is not None))
     r.append(("a hard ramp shows two plateaus, not a gradient",
               hi is not None and mtoon.delta_e(list(hi), list(lo)) > 5.0))
 
-    flat = render_sphere(lit, lit, res=64, shade_toony=1.0)
+    flat = render_sphere(lit, lit, res=64, shading_toony_factor=1.0)
     fhi, flo = plateaus(flat)
     r.append(("the shade plateau does NOT reach the render, as the docstring says",
               fhi is not None and mtoon.delta_e(list(fhi), list(flo)) > 1.0))
@@ -123,11 +124,10 @@ def self_test():
               dhi is not None and dhi.mean() < hi.mean()))
 
     r.append(("the ramp reaches both ends",
-              mtoon.light_intensity(1.0, 0.0, 0.9) == 1.0
-              and mtoon.light_intensity(-1.0, 0.0, 0.9) == 0.0))
+              mtoon.shading(1.0) == 1.0 and mtoon.shading(-1.0) == 0.0))
     r.append(("two different lit colours render differently",
-              not np.allclose(render_sphere((1., 0, 0), (.2, 0, 0), res=32, shade_toony=1.0),
-                              render_sphere((0, 0, 1.), (0, 0, .2), res=32, shade_toony=1.0))))
+              not np.allclose(render_sphere((1., 0, 0), (.2, 0, 0), res=32, shading_toony_factor=1.0),
+                              render_sphere((0, 0, 1.), (0, 0, .2), res=32, shading_toony_factor=1.0))))
     r.append(("the model itself does separate lit from shade",
               mtoon.rendered_contrast(lit, shade) > 5.0
               and mtoon.rendered_contrast(lit, lit) < 1e-9))

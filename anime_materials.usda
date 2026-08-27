@@ -117,9 +117,9 @@ def Scope "AnimeMaterials"
 
     def Scope "Provenance"
     {
-        string materialModel = "MToon 3.3, via V-Sekai Godot-MToon-Shader"
+        string materialModel = "VRMC_materials_mtoon-1.0"
         string shadingModel = "mtoon.py"
-        string renderNote = "MToon is not a BSDF; see mtoon_sweep.py"
+        string renderNote = "MToon is not a BSDF; rendered by mtoon_integrator.py"
         string toneScale = "Monk Skin Tone, 10 levels, CIELAB at D65"
         string gate = "check_anime_materials.py"
         string citation = "anime-materials.cff"
