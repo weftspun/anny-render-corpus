@@ -98,7 +98,7 @@ def build(base, shade, width=256, height=256, spp=1, shape=SHAPE, **kw):
         "sensor": {
             "type": "perspective", "fov": 40,
             "to_world": mi.ScalarTransform4f().look_at(
-                origin=[0, 3, 0], target=[0, 0, 0], up=[0, 0, 1]),
+                origin=[0, 0, 3], target=[0, 0, 0], up=[0, 1, 0]),
             "film": {"type": "hdrfilm", "width": width, "height": height,
                      "rfilter": {"type": "box"}, "pixel_format": "rgba"},
             "sampler": {"type": "independent", "sample_count": spp},

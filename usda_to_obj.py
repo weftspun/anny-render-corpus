@@ -22,6 +22,10 @@ def read_mesh(path):
         raise SystemExit("FAIL  %s carries no UsdGeom.Mesh" % path)
     mesh = UsdGeom.Mesh(prim)
     points = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float64)
+    # Composed to world: GetPointsAttr is local and the up conversion sits on an ancestor.
+    world = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    matrix = np.array(world).T
+    points = points @ matrix[:3, :3].T + matrix[:3, 3]
     counts = np.asarray(mesh.GetFaceVertexCountsAttr().Get(), dtype=np.int64)
     indices = np.asarray(mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int64)
     if counts.sum() != len(indices):
@@ -31,7 +35,11 @@ def read_mesh(path):
         "up": str(UsdGeom.GetStageUpAxis(stage)),
         "meters_per_unit": float(UsdGeom.GetStageMetersPerUnit(stage)),
         "orientation": str(mesh.GetOrientationAttr().Get() or "rightHanded"),
-        "xform_ops": [str(o.GetOpName()) for o in UsdGeom.Xformable(prim).GetOrderedXformOps()],
+        "xform_ops": [str(o.GetOpName())
+                      for a in prim.GetPath().GetPrefixes()
+                      if stage.GetPrimAtPath(a) and stage.GetPrimAtPath(a).IsA(UsdGeom.Xformable)
+                      for o in UsdGeom.Xformable(stage.GetPrimAtPath(a)).GetOrderedXformOps()],
+        "local_to_world": [float(v) for v in np.array(world).ravel()],
     }
     return str(prim.GetPath()), points, counts, indices, conv
 
@@ -135,7 +143,7 @@ def convert(src, dst, scale=1.0, keep_metres=False):
 
 
 def self_test():
-    """Twenty-four controls, over geometry and over the conventions it carries."""
+    """Twenty-six controls, over geometry and over the conventions it carries."""
     import pathlib
     import tempfile
     r = []
@@ -148,7 +156,6 @@ def self_test():
 
     pts = np.array([[0., 0, 0], [2, 0, 0], [2, 4, 0], [0, 4, 0], [1, 6, 0]])
     n = normalise(pts, 1.0)
-    # The bounding box, not the centroid; a symmetric fixture hides the difference.
     r.append(("normalise centres the bounding box",
               np.allclose((n.max(0) + n.min(0)) / 2, 0, atol=1e-12)))
     r.append(("normalise fits the longest axis", abs((n.max(0) - n.min(0)).max() - 1.0) < 1e-12))
@@ -157,6 +164,16 @@ def self_test():
               abs((n.max(0) - n.min(0))[0] / (n.max(0) - n.min(0))[1] - want) < 1e-12))
     r.append(("the centroid is NOT what moved, so the two are told apart",
               not np.allclose(n.mean(axis=0), 0, atol=1e-9)))
+
+    # An ANCESTOR transform must reach the points.
+    world = np.array([[1., 0, 0, 0], [0, 0, 1, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
+    local = np.array([[0., 0, 0], [1, 0, 0], [0, 0, 2]])
+    composed = local @ world[:3, :3].T + world[:3, 3]
+    r.append(("a rotation maps local Z-up to world Y-up",
+              abs(np.ptp(composed, axis=0)[1] - 2.0) < 1e-12
+              and abs(np.ptp(local, axis=0)[2] - 2.0) < 1e-12))
+    r.append(("and the two therefore disagree, which is how the bug hid",
+              int(np.argmax(np.ptp(composed, axis=0))) != int(np.argmax(np.ptp(local, axis=0)))))
 
     nrm = vertex_normals(n, tris)
     r.append(("normals are unit length", np.allclose(np.linalg.norm(nrm, axis=1), 1.0)))
@@ -169,7 +186,6 @@ def self_test():
     r.append(("the obj carries normals, so no renderer invents its own",
               body.count("vn ") == len(n)))
 
-    # SCALE.
     box = np.array([[0., 0, 0], [1, 0, 0], [1, 2, 0], [0, 2, 0], [0, 0, 3]])
     r.append(("metres scale with metersPerUnit",
               np.allclose((box * 0.01).max(0) - (box * 0.01).min(0),
@@ -178,7 +194,6 @@ def self_test():
               abs((normalise(box, 1.0).max(0) - normalise(box, 1.0).min(0)).max() - 1.0)
               < 1e-12))
 
-    # UP.
     tall_z = np.array([[0., 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 5]])
     rot = to_y_up(tall_z, "Z")
     r.append(("a Z-up asset has its height moved to Y",
@@ -194,7 +209,6 @@ def self_test():
     except SystemExit:
         r.append(("an unknown up axis is refused", True))
 
-    # FORWARD.
     r.append(("forward is orthogonal to up",
               abs(float(FORWARD_Y_UP @ np.array([0.0, 1.0, 0.0]))) < 1e-12))
 
