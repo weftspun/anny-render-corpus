@@ -1,8 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
-"""MToon 1.0 as a wide forward Mitsuba integrator: shading at the hit, shadows, no deferral.
-
-The scalar version in mtoon_integrator.py crosses into Python once per sample. This writes
-the same model in Dr.Jit ops, so llvm_ad_rgb widens it and the shadow ray stays.
+"""MToon 1.0 as a wide forward Mitsuba integrator, in Dr.Jit ops so llvm_ad_rgb widens it.
 
     python mtoon_forward.py --self-test [--bench]
 """
@@ -92,10 +89,10 @@ def integrator_dict(base, shade, light=(1.0, 0.2, 0.6), shadows=True, **kw):
     return d
 
 
-def render(base, shade, width=256, height=256, spp=1, shape=SHAPE, **kw):
+def build(base, shade, width=256, height=256, spp=1, shape=SHAPE, **kw):
     import mitsuba as mi
     register()
-    scene = mi.load_dict({
+    return mi.load_dict({
         "type": "scene",
         "integrator": integrator_dict(base, shade, **kw),
         "sensor": {
@@ -108,11 +105,30 @@ def render(base, shade, width=256, height=256, spp=1, shape=SHAPE, **kw):
         },
         "obj": {"type": "obj", "filename": str(shape)},
     })
+
+
+def retune(scene, base, shade, light=None, **kw):
+    """Change the material in place; the integrator is a Python object."""
+    it = scene.integrator()
+    it.base = [float(c) for c in base]
+    it.shade = [float(c) for c in shade]
+    if light is not None:
+        v = np.array(light, dtype=float)
+        it.light = tuple(float(x) for x in v / np.linalg.norm(v))
+    for k, v in kw.items():
+        if k in it.p:
+            it.p[k] = float(v)
+    return scene
+
+
+def render(base, shade, width=256, height=256, spp=1, shape=SHAPE, **kw):
+    import mitsuba as mi
+    scene = build(base, shade, width, height, spp, shape, **kw)
     return np.array(mi.render(scene, spp=spp))
 
 
 def self_test():
-    """Eight controls. Five must reject a render that lost the model or the shadows."""
+    """Eight controls; five reject a render that lost the model or the shadows."""
     import mitsuba as mi
     mi.set_variant("llvm_ad_rgb")
     r = []
