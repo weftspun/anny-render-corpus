@@ -38,6 +38,37 @@ written claims go stale the moment `--views` changes — `weft_loop.py`'s "five 
 views land between steps", and `check_view_selection.py`'s pitch table — and both should be
 derived from `--views` rather than restated.
 
+## What the corpus is, and what is only apparatus
+
+The corpus is the training, test and validation data. Nothing else in this repository is
+corpus, and most of this document describes apparatus: the shading model, the integrator, the
+material layer, the camera vocabulary, the test shape and the tone clip are instruments and
+arguments about the corpus rather than data anything trains on.
+
+The splits are a ladder and it is incomplete on purpose:
+
+| rung | records |
+| --- | ---: |
+| train | 85 |
+| val | 10 |
+| test | 0 |
+
+**Empty is not the problem; inexpressible is.** `anny_render_schema.py` types `split` as
+`"train" | "val"`, so a test rung cannot be written down even if somebody wanted to fill it.
+An empty rung is a fill. A missing one is a schema change and a validator change, and it
+falls due at the moment there is least appetite for it, which is when a checkpoint is finally
+being chosen.
+
+Leaving the rung empty is the defensible half. A test split that exists early sits there being
+available, and the blinded-holdout rule already says a holdout consulted repeatedly during
+development has been trained on by hand. There is nothing to select between yet.
+
+**Split hygiene is nominal at one identity.** `sample_identities.py` assigns split at identity
+level so no identity crosses splits, and there is one identity, so the 85 and the 10 are a
+split over PAIRS. The rule is written for a population that does not exist yet and currently
+protects nothing. Train and val do share `pose_040`, but that is the source frame every edit
+record points at rather than a leak: the targets do not overlap.
+
 ## Cardinality, which is where the design actually stands
 
 | axis | levels available | levels in the corpus |
