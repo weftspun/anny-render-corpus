@@ -19,6 +19,7 @@ import frame_ring  # noqa: E402
 import mtoon  # noqa: E402
 import mtoon_forward as forward  # noqa: E402
 import mtoon_sweep as sweep  # noqa: E402
+import placeholder_cards  # noqa: E402
 
 SHAPE = pathlib.Path(__file__).resolve().parent / "mtoon-reference" / "testshape.obj"
 LIGHT = np.array([1.0, 0.2, 0.6])
@@ -30,6 +31,17 @@ def frame_for(tone_base, shade_colour, width, height, spp=1, **kw):
     out[..., :3] = img[..., :3]
     out[..., 3] = img[..., 3]
     return out
+
+
+CARD_HOLD = 180
+
+
+def sequence(hold, card_hold=CARD_HOLD):
+    """Tone holds, then a card for every axis with no data."""
+    rows = [("tone",) + row for row in tone_frames(hold)]
+    for gap in placeholder_cards.GAPS:
+        rows.extend([("card", gap)] * card_hold)
+    return rows
 
 
 def tone_frames(hold):
@@ -92,7 +104,27 @@ def _build_lut():
 _LUT = _build_lut()
 
 
+_PACKER = None
+
+
+def packer():
+    """The Slang kernel if it is built, the numpy table if not. Both agree to one code."""
+    global _PACKER
+    if _PACKER is None:
+        try:
+            import check_mtoon_slang
+            check_mtoon_slang.library()
+            _PACKER = check_mtoon_slang.srgb8
+        except SystemExit:
+            _PACKER = to_srgb8_lut
+    return _PACKER
+
+
 def to_srgb8(rgba):
+    return packer()(rgba)
+
+
+def to_srgb8_lut(rgba):
     """A table lookup, not a pow."""
     lin = np.clip(rgba[..., :3], 0.0, 1.0)
     idx = (lin * (_LUT_N - 1) + 0.5).astype(np.uint16)
@@ -106,7 +138,7 @@ def render_chunks(stream, hold, width, height, spp=1, slots=8, chunk=50, verbose
     """Render a slice per subprocess. Dr.Jit breaks after a few hundred renders in one
     process -- `could not resolve symbol` naming `callables` -- and no cache flush fixes it,
     so each chunk gets a fresh interpreter and the stream is appended."""
-    total = len(tone_frames(hold))
+    total = len(sequence(hold))
     stream = pathlib.Path(stream)
     if stream.exists():
         stream.unlink()
@@ -143,8 +175,11 @@ def render(stream, hold, width, height, spp=1, slots=8, flush_every=10, verbose=
     half = width // 2
     stream = pathlib.Path(stream)
     stream.parent.mkdir(parents=True, exist_ok=True)
-    rows = tone_frames(hold)[start:None if count is None else start + count]
-    scenes = [forward.build(rows[0][1], rows[0][2], half, height, spp,
+    rows = sequence(hold)[start:None if count is None else start + count]
+    first = next((x for x in rows if x[0] == "tone"), None)
+    if first is None:
+        first = next(x for x in sequence(hold) if x[0] == "tone")
+    scenes = [forward.build(first[2], first[3], half, height, spp,
                             shading_toony_factor=0.9) for _ in range(2)]
     ring = frame_ring.FrameRing(slots, "frames")
 
@@ -159,7 +194,17 @@ def render(stream, hold, width, height, spp=1, slots=8, flush_every=10, verbose=
     thread = threading.Thread(target=writer, name="write", daemon=True)
     thread.start()
     t0 = time.perf_counter()
-    for i, (tone, base, shade_colour, phase) in enumerate(rows):
+    cache = {}
+    for i, row in enumerate(rows):
+        if row[0] == "card":
+            key = row[1][0]
+            if key not in cache:
+                cache.clear()
+                cache[key] = to_srgb8(placeholder_cards.card(*row[1], width=width,
+                                                             height=height)).tobytes()
+            ring.put(cache[key])
+            continue
+        _, tone, base, shade_colour, phase = row
         light = sun(phase)
         forward.retune(scenes[0], base, shade_colour, light)
         forward.retune(scenes[1], base, [c * 0.6 for c in base], light)
@@ -183,7 +228,7 @@ def render(stream, hold, width, height, spp=1, slots=8, flush_every=10, verbose=
 
 
 def self_test():
-    """Seventeen controls; five reject a frame not showing the material."""
+    """Twenty controls; five reject a frame not showing the material."""
     r = []
     base = sweep.linear_of("825c43")
     dark = [c * sweep.solve_multiplier(base, 12.0) for c in base]
@@ -200,6 +245,13 @@ def self_test():
     flat = frame_for(base, [c * 0.6 for c in base], 128, 128, shading_toony_factor=1.0)
     r.append(("the flat multiplier renders a different frame",
               not np.allclose(frame, flat)))
+
+    seq = sequence(6, 4)
+    r.append(("the sequence ends with cards, one block each",
+              sum(1 for x in seq if x[0] == "card") == 4 * len(placeholder_cards.GAPS)))
+    r.append(("every gap appears in the sequence",
+              {x[1][0] for x in seq if x[0] == "card"}
+              == {g[0] for g in placeholder_cards.GAPS}))
 
     got = allocate(PERSONA_SHARE, 900)
     r.append(("every persona clears the floor", min(got.values()) >= MIN_HOLD))
@@ -224,6 +276,9 @@ def self_test():
               abs(sun(0.02)[2] - a[2]) < abs(sun(0.5)[2] - sun(0.44)[2])))
 
     eight = to_srgb8(frame)
+    r.append(("the two packers agree to one code",
+              int(np.abs(to_srgb8_lut(frame).astype(int)
+                         - packer()(frame).astype(int)).max()) <= 1))
     r.append(("the 8-bit conversion keeps the mask exactly",
               np.array_equal(eight[..., 3] > 127, hit)))
     probe = np.linspace(0, 1, 4096, dtype=np.float64)
