@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+"""The MToon sweep. MToon is not a BSDF: its shade colour is painted where dot(N, L) < 0,
+where a physically based integrator contributes nothing, so a BSDF renders lit-to-black and
+the shade plateau never appears. The commit message carries the measurement.
+
+    python mtoon_sweep.py [--self-test]
+"""
+from __future__ import annotations
+
+import argparse
+import math
+import pathlib
+import sys
+
+import numpy as np
+
+import mtoon
+
+MST = ["f6ede4", "f3e7db", "f7ead0", "eadaba", "d7bd96",
+       "a07e56", "825c43", "604134", "3a312a", "292420"]
+TOONY = (0.0, 0.5, 0.9, 1.0)
+SHIFT = (-0.3, 0.0, 0.3)
+
+
+def srgb_to_linear(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def linear_of(hexs):
+    h = hexs.lstrip("#")
+    return [srgb_to_linear(int(h[i:i + 2], 16) / 255) for i in (0, 2, 4)]
+
+
+def solve_multiplier(lit, target):
+    lo, hi = 0.0, 1.0
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        if mtoon.delta_e(lit, [c * mid for c in lit]) > target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def render_sphere(lit, shade, res=128, **params):
+    """One sphere, one directional light."""
+    import mitsuba as mi
+    mtoon.register()
+    scene = mi.load_dict({
+        "type": "scene",
+        "integrator": {"type": "direct", "emitter_samples": 1, "bsdf_samples": 0},
+        "sensor": {
+            "type": "perspective", "fov": 40,
+            "to_world": mi.ScalarTransform4f().look_at(
+                origin=[0, 0, 5], target=[0, 0, 0], up=[0, 1, 0]),
+            "film": {"type": "hdrfilm", "width": res, "height": res,
+                     "rfilter": {"type": "box"}, "pixel_format": "rgb"},
+            "sampler": {"type": "independent", "sample_count": 16},
+        },
+        "ball": {"type": "sphere", "radius": 1.0,
+                 "bsdf": mtoon.scene_dict(lit, shade, **params)},
+        "sun": {"type": "directional", "direction": [-1, -0.2, -0.6],
+                "irradiance": {"type": "rgb", "value": math.pi}},
+    })
+    return np.array(mi.render(scene, spp=16))
+
+
+def plateaus(image):
+    """Brightest and darkest tenth of the lit body."""
+    flat = image.reshape(-1, 3)
+    luma = flat @ np.array([0.2126, 0.7152, 0.0722])
+    body = flat[luma > 1e-6]
+    if len(body) < 20:
+        return None, None
+    order = np.argsort(body @ np.array([0.2126, 0.7152, 0.0722]))
+    k = max(1, len(order) // 10)
+    return body[order[-k:]].mean(axis=0), body[order[:k]].mean(axis=0)
+
+
+def run(out, res=128, target=12.0, verbose=True):
+    rows = []
+    for i, hexs in enumerate(MST, 1):
+        lit = linear_of(hexs)
+        mult = solve_multiplier(lit, target)
+        shade = [c * mult for c in lit]
+        material_de = mtoon.delta_e(lit, shade)
+        img = render_sphere(lit, shade, res=res, shade_toony=0.9, shade_shift=0.0)
+        hi, _ = plateaus(img)
+        rendered_de = mtoon.rendered_contrast(lit, shade, shade_toony=0.9, shade_shift=0.0)
+        rows.append((i, hexs, mult, material_de, rendered_de))
+        if verbose:
+            print("  MST %2d  x%.4f   material dE %5.2f   rendered dE %5.2f"
+                  % (i, mult, material_de, rendered_de))
+    if out:
+        pathlib.Path(out).mkdir(parents=True, exist_ok=True)
+        ramp = np.array([[mtoon.light_intensity(x, s, t)
+                          for x in np.linspace(-1, 1, 64)]
+                         for t in TOONY for s in SHIFT])
+        np.save(pathlib.Path(out) / "ramps.npy", ramp)
+    return rows
+
+
+def self_test():
+    """Eight controls. Five must reject a render that is not showing the material."""
+    r = []
+    lit = linear_of("d7bd96")
+    shade = [c * 0.4 for c in lit]
+
+    img = render_sphere(lit, shade, res=64, shade_toony=1.0, shade_shift=0.0)
+    hi, lo = plateaus(img)
+    r.append(("the sphere renders something", hi is not None))
+    r.append(("a hard ramp shows two plateaus, not a gradient",
+              hi is not None and mtoon.delta_e(list(hi), list(lo)) > 5.0))
+
+    flat = render_sphere(lit, lit, res=64, shade_toony=1.0)
+    fhi, flo = plateaus(flat)
+    r.append(("the shade plateau does NOT reach the render, as the docstring says",
+              fhi is not None and mtoon.delta_e(list(fhi), list(flo)) > 1.0))
+
+    dark = render_sphere([c * 0.25 for c in lit], [c * 0.1 for c in lit], res=64)
+    dhi, _ = plateaus(dark)
+    r.append(("a darker material renders darker",
+              dhi is not None and dhi.mean() < hi.mean()))
+
+    r.append(("the ramp reaches both ends",
+              mtoon.light_intensity(1.0, 0.0, 0.9) == 1.0
+              and mtoon.light_intensity(-1.0, 0.0, 0.9) == 0.0))
+    r.append(("two different lit colours render differently",
+              not np.allclose(render_sphere((1., 0, 0), (.2, 0, 0), res=32, shade_toony=1.0),
+                              render_sphere((0, 0, 1.), (0, 0, .2), res=32, shade_toony=1.0))))
+    r.append(("the model itself does separate lit from shade",
+              mtoon.rendered_contrast(lit, shade) > 5.0
+              and mtoon.rendered_contrast(lit, lit) < 1e-9))
+    r.append(("the plateau finder rejects an empty image",
+              plateaus(np.zeros((16, 16, 3)))[0] is None))
+
+    bad = sum(1 for _, ok in r if not ok)
+    for name, ok in r:
+        print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
+    print("  %d of %d controls fired." % (len(r) - bad, len(r)))
+    return 1 if bad else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--out", default="")
+    ap.add_argument("--res", type=int, default=128)
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args()
+
+    import mitsuba as mi
+    mi.set_variant("scalar_rgb")
+    if args.self_test:
+        return self_test()
+
+    rows = run(args.out, res=args.res)
+    rendered = [r[4] for r in rows if not math.isnan(r[4])]
+    print()
+    print("  material dE spread  %.2f to %.2f" % (min(r[3] for r in rows),
+                                                  max(r[3] for r in rows)))
+    print("  rendered dE spread  %.2f to %.2f  (%.1fx)"
+          % (min(rendered), max(rendered), max(rendered) / min(rendered)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
