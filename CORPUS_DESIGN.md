@@ -186,11 +186,17 @@ pixels at a hard ramp are the terminator rather than the model: a tessellated no
 disagrees with the analytic one by a hair and the step turns that into the whole base-to-shade
 gap, which over pi is 0.1337 against the 0.1351 measured.
 
-**THE ONE REAL DIFFERENCE IS A FACTOR OF 1/PI.** Unscaled, their pixels over ours is a
-near-constant 0.3167 to 0.3183 against 1/pi = 0.31831, flat across every toony value. The
-VRM 1.0 pseudocode ends `color = color * lightColor` with no such term and three.js applies
-the Lambertian convention to direct light, so a corpus rendered with our integrator sits pi
-times brighter than the same material in a three-vrm viewer.
+**THE ONE REAL DIFFERENCE IS A FACTOR OF 1/PI, AND IT IS THE SPEC THAT IS THE OUTLIER.**
+Unscaled, their pixels to ours is a near-constant 0.3167 to 0.3183 against
+1/pi = 0.31831, flat across every toony value. Two independent implementations apply it by
+two different mechanisms: the Godot port writes `vec3 lighting = lightColor / 3.14159;`
+into `mtoon_common.gdshaderinc:156` by hand, and three-vrm gets it from three.js's Lambert
+BRDF as `RECIPROCAL_PI * diffuseColor`. The VRM 1.0 pseudocode ends
+`color = color * lightColor` with no such term, so it is the spec text that omits what
+every renderer does rather than a convention either engine invented.
+
+A corpus rendered with our integrator therefore sits pi times brighter than the same
+material in any viewer.
 
 That is not cosmetic here. The tone ladder solves for a dE between plateaus and CIELAB is
 not scale invariant, so the same material at two exposures does not give the same dE. The

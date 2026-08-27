@@ -30,11 +30,17 @@ sphere's tessellated normal disagrees with the analytic one by a hair and the st
 amplifies it into the full base-to-shade gap. That gap over pi is 0.1337 against a measured
 max of 0.1351, which is the cost of one flipped pixel and not a difference in shading.
 
-**THE ONE REAL DIFFERENCE IS A FACTOR OF 1/PI.** Before scaling, the ratio of their pixels
-to ours is a near-constant 0.3167 to 0.3183 against 1/pi = 0.31831, flat across every
-toony value. The VRM 1.0 pseudocode ends `color = color * lightColor` with no such term;
-three.js applies the Lambertian convention to direct light. So a corpus rendered with our
-integrator sits pi times brighter than the same material in a three-vrm viewer.
+**THE ONE REAL DIFFERENCE IS A FACTOR OF 1/PI, AND IT IS THE SPEC THAT IS THE OUTLIER.**
+Unscaled, their pixels to ours is a near-constant 0.3167 to 0.3183 against
+1/pi = 0.31831, flat across every toony value. Two independent implementations apply it by
+two different mechanisms: the Godot port writes `vec3 lighting = lightColor / 3.14159;`
+into `mtoon_common.gdshaderinc:156` by hand, and three-vrm gets it from three.js's Lambert
+BRDF as `RECIPROCAL_PI * diffuseColor`. The VRM 1.0 pseudocode ends
+`color = color * lightColor` with no such term, so it is the spec text that omits what
+every renderer does rather than a convention either engine invented.
+
+A corpus rendered with our integrator therefore sits pi times brighter than the same
+material in any viewer.
 
 That is not cosmetic for this corpus. The tone ladder solves for a dE between the lit and
 shade plateaus, and CIELAB is not scale invariant, so the same material measured at two

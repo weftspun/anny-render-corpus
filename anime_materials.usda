@@ -104,15 +104,24 @@ def Scope "AnimeMaterials"
         doc = """Sampled per material, uniformly, with the SAME distribution for every tone.
         Equal distributions across tones are what make this a controlled comparison: a tone
         that also drew a different terminator distribution would confound the two, and the
-        detection gap could no longer be attributed to tone."""
+        detection gap could no longer be attributed to tone.
+
+        EVERY NAME HERE IS A PARAMETER `mtoon.py` IMPLEMENTS, and check_anime_materials.py
+        holds the two against each other. An earlier revision carried `shadeHueShiftDegrees`,
+        which is not an MToon parameter at all, and two commits claimed to have renamed these
+        axes while matching nothing.
+
+        NOT SAMPLED, AND NAMED RATHER THAN OMITTED: `giEqualizationFactor`,
+        `outlineWidthFactor` and every texture-valued parameter. The model implements no
+        global illumination and no outline, so declaring them would sample an axis nothing
+        reads."""
     )
     {
-        float2 shadingToonyFactor = (0.7, 1)
-        float2 shadingShiftFactor = (-0.3, 0.3)
-        float2 rimLightingMixFactor = (0, 0.6)
+        float2 shadingToonyFactor = (0, 1)
+        float2 shadingShiftFactor = (-1, 1)
+        float2 parametricRimLiftFactor = (0, 1)
         float2 parametricRimFresnelPowerFactor = (1, 5)
-        float2 outlineWidthFactor = (0, 0.02)
-        float2 shadeHueShiftDegrees = (-30, 0)
+        float2 rimLightingMixFactor = (0, 1)
     }
 
     def Scope "Provenance"
