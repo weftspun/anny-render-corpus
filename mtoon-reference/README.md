@@ -46,3 +46,36 @@ That is not cosmetic for this corpus. The tone ladder solves for a dE between th
 shade plateaus, and CIELAB is not scale invariant, so the same material measured at two
 exposures does not give the same dE. The targets have to be verified at the exposure the
 viewer actually uses rather than at ours.
+
+## The context loss that made the mesh render black
+
+Headless Chromium on swiftshader loses the WebGL context across an idle macrotask gap. The
+mesh path fetches an OBJ, which is exactly such a gap, and every pixel came back black:
+`isContextLost()` true and zero draw calls, with the geometry loaded and the camera correct.
+
+It cost several wrong hypotheses -- backface winding, culling, the camera basis, the drawing
+buffer -- and none of them were it. What settled it was a 50 ms `await` in the SPHERE path,
+which took a working render from 3220 non-black pixels to zero without touching geometry or
+camera at all. Rendering into a `WebGLRenderTarget` did not help either, so it is the context
+rather than the drawing buffer.
+
+**So every await in `page.html` happens before the renderer is constructed.** The mesh source
+is fetched as text first and `OBJLoader.parse` runs synchronously afterwards. A future edit
+that moves an `await` below the `new THREE.WebGLRenderer` line will silently return black
+pixels, which is why the ordering carries a comment rather than being left to look arbitrary.
+
+`draws` and `lost` are reported in every result so this failure names itself next time.
+
+## The shape
+
+`testshape.obj` is generated, not committed:
+
+    python ../usda_to_obj.py ../../thebasemesh-stage/models/S_Abacus.usda testshape.obj --scale 2.0
+
+CC0 public domain, 5,840 points and 9,880 triangles, beads occluding beads and a frame
+casting onto rods. A sphere is convex and can never self-shadow, so it exercises no part of
+the shadow path.
+
+Coverage at 96 square: the sphere fills 78.6 per cent of frame, which is pi/4 and confirms
+the unit framing; the abacus fills 47.1 per cent, and turning shadows on adds a second draw
+call for the shadow map without changing coverage.

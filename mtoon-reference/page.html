@@ -4,34 +4,44 @@
 <script type="importmap">
 { "imports": {
   "three": "./node_modules/three/build/three.module.js",
-  "three/webgpu": "./node_modules/three/build/three.webgpu.js",
-  "three/tsl": "./node_modules/three/build/three.tsl.js"
+  "three/addons/": "./node_modules/three/examples/jsm/"
 } }
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MToonMaterial } from './node_modules/@pixiv/three-vrm-materials-mtoon/lib/three-vrm-materials-mtoon.module.js';
 
 const P = Object.fromEntries(new URLSearchParams(location.search));
 const num = (k, d) => (P[k] !== undefined ? Number(P[k]) : d);
 const N = num('res', 128);
+const SHAPE = P.shape || '';
+
+// EVERY AWAIT HAPPENS BEFORE THE CONTEXT EXISTS, and that ordering is the point of this file.
+// Headless Chromium on swiftshader loses the WebGL context across an idle macrotask gap:
+// fetching the mesh took a working render from 3220 non-black pixels to zero, with
+// isContextLost() true and no draw calls, whatever the drawing buffer was doing.
+const source = SHAPE ? await (await fetch(SHAPE)).text() : '';
 
 THREE.ColorManagement.enabled = false;
 
 const canvas = document.getElementById('c');
 canvas.width = N; canvas.height = N;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false,
-                                           preserveDrawingBuffer: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false });
 renderer.setPixelRatio(1);
 renderer.setSize(N, N, false);
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.setClearColor(0x000000, 1);
+renderer.shadowMap.enabled = num('shadows', 0) === 1;
+renderer.shadowMap.type = THREE.BasicShadowMap;
 
 const scene = new THREE.Scene();
-// Orthographic and exactly unit-framed, so pixel (u,v) has normal (u, v, sqrt(1-u^2-v^2)).
-const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-camera.position.set(0, 0, 3);
+// Orthographic and unit-framed. With no shape this is the sphere, where pixel (u, v) carries
+// normal (u, v, sqrt(1 - u^2 - v^2)) and the comparison needs no fitting.
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 20);
+if (SHAPE) { camera.up.set(0, 0, 1); camera.position.set(0, 3, 0); }
+else { camera.up.set(0, 1, 0); camera.position.set(0, 0, 3); }
 camera.lookAt(0, 0, 0);
 
 const material = new MToonMaterial({
@@ -48,22 +58,45 @@ const material = new MToonMaterial({
   outlineWidthFactor: 0.0,
 });
 
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(1, 256, 256), material));
+let geometry;
+if (SHAPE) {
+  const group = new OBJLoader().parse(source);
+  group.traverse(o => { if (o.isMesh && !geometry) geometry = o.geometry; });
+  if (!geometry) throw new Error('no mesh in ' + SHAPE);
+} else {
+  geometry = new THREE.SphereGeometry(1, 256, 256);
+}
+const mesh = new THREE.Mesh(geometry, material);
+mesh.castShadow = true; mesh.receiveShadow = true;
+scene.add(mesh);
 
 const light = new THREE.DirectionalLight(0xffffff, num('intensity', 1.0));
 light.position.set(num('light_x', 1.0), num('light_y', 0.2), num('light_z', 0.6));
 light.target.position.set(0, 0, 0);
+light.castShadow = renderer.shadowMap.enabled;
+light.shadow.mapSize.set(2048, 2048);
+const sc = light.shadow.camera;
+sc.left = -1.5; sc.right = 1.5; sc.top = 1.5; sc.bottom = -1.5; sc.near = 0.1; sc.far = 20;
+sc.updateProjectionMatrix();
+light.shadow.bias = -0.001;
 scene.add(light); scene.add(light.target);
 
 renderer.render(scene, camera);
-
 const gl = renderer.getContext();
 const buf = new Uint8Array(N * N * 4);
 gl.readPixels(0, 0, N, N, gl.RGBA, gl.UNSIGNED_BYTE, buf);
 
+geometry.computeBoundingBox();
+const bb = geometry.boundingBox;
 window.RESULT = JSON.stringify({
   res: N,
   three: THREE.REVISION,
+  shape: SHAPE,
+  shadows: renderer.shadowMap.enabled,
+  lost: gl.isContextLost(),
+  draws: renderer.info.render.calls,
+  verts: geometry.attributes.position.count,
+  bbox: [bb.min.x, bb.min.y, bb.min.z, bb.max.x, bb.max.y, bb.max.z],
   light: [light.position.x, light.position.y, light.position.z],
   pixels: Array.from(buf),
 });

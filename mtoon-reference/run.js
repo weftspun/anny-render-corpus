@@ -33,7 +33,7 @@ function serve(root) {
   const p = await b.newPage();
   const errs = [];
   p.on('pageerror', e => errs.push(String(e)));
-  p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+  p.on('console', m => errs.push('[' + m.type() + '] ' + m.text()));
   await p.goto(`http://127.0.0.1:${port}/page.html` + (q ? '?' + q : ''));
   try {
     await p.waitForFunction(() => window.DONE === true, { timeout: 30000 });
@@ -41,6 +41,7 @@ function serve(root) {
     console.error('FAILED\n' + errs.join('\n'));
     await b.close(); server.close(); process.exit(1);
   }
+  if (process.env.VERBOSE) console.error(errs.join('\n'));
   process.stdout.write(await p.evaluate(() => window.RESULT));
   await b.close();
   server.close();
