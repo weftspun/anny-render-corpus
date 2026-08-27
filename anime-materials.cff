@@ -1,0 +1,84 @@
+cff-version: 1.2.0
+message: "If you use these materials, please cite them as below."
+type: dataset
+title: "anime-materials"
+authors:
+  - name: "weft"
+license: Apache-2.0
+repository-code: "https://github.com/weftspun/anny-render-corpus"
+abstract: >-
+  Procedurally generated MToon material parameters for anime-styled characters, stratified
+  across the ten Monk Skin Tone levels. The corpus is the parameter layer plus a seed, not a
+  set of pixels: anime_materials.usda carries the tone identities and the sampled axes, and
+  check_anime_materials.py re-derives everything that follows from them.
+
+  Constructed rather than generated. No generative model produces any part of this, so the
+  same seed reproduces the corpus and every label is true by construction.
+
+  THE SHADE COLOUR IS WHERE TONE EQUITY IS DECIDED. MToon extends glTF pbrMetallicRoughness
+  rather than replacing it, so the lit colour is baseColorFactor and the extension adds a
+  shade colour that PBR does not constrain. A single shade multiplier is not equitable: at
+  x0.6 the lit-to-shade separation is dE 17.3 at MST 1 and dE 4.8 at MST 10, so the cel
+  terminator that defines the form on a light character is 3.6x weaker on a dark one. The
+  multiplier is solved per tone to hold contrast constant instead.
+
+  APPLYING THE MONK SCALE TO ANIME IS A SUBSTITUTION AND IS RECORDED AS ONE. The scale is
+  defined on photographs of real skin. Anime skin is an artistic choice rather than a
+  reflectance, and no anime skin tone standard exists to use instead: Danbooru's tags are a
+  folksonomy with no colour values, defined relative to "the usual Eurasian skin tone", and
+  its own forum records canonically dark-skinned characters being redrawn as tans. So these
+  cells give coverage of a perceptual range. They do not claim any cell depicts a real
+  population, and characters with non-human skin have no Monk code at all.
+references:
+  - type: software
+    title: "Godot-MToon-Shader"
+    authors:
+      - name: "V-Sekai Contributors"
+      - family-names: "SUMI"
+        given-names: "Masataka"
+    url: "https://github.com/V-Sekai/godot-vrm/tree/master/addons/Godot-MToon-Shader"
+    notes: >-
+      MIT. Read for the MToon 3.3 implementation, whose ramp is
+      clamp((I - shadeShift) / (mix(1, shadeShift, shadeToony) - shadeShift), 0, 1). mtoon.py
+      targeted that VRM0 form for one commit and now implements VRM1.0 instead; the two are
+      different parameterisations of the same idea and are recorded together so a reader who
+      finds the Godot source does not conclude this corpus follows it.
+  - type: standard
+    title: "VRMC_materials_mtoon-1.0"
+    authors:
+      - name: "VRM Consortium"
+    url: "https://github.com/vrm-c/vrm-specification/tree/master/specification/VRMC_materials_mtoon-1.0"
+    notes: >-
+      The material model. shadeColorFactor and shadingToonyFactor are the two parameters the
+      equity argument turns on; shading is linearstep(-1 + toony, 1 - toony, shading).
+  - type: standard
+    title: "Monk Skin Tone Scale"
+    authors:
+      - family-names: "Monk"
+        given-names: "Ellis"
+    url: "https://skintone.google/"
+    notes: >-
+      Ten levels. CIELAB at D65 is authoritative and the sRGB hex is the published conversion
+      from it. This layer carries the hex, which is a known substitution to replace with the
+      CIELAB triple.
+  - type: generic
+    title: "Tag Group: Skin Color"
+    authors:
+      - name: "Danbooru"
+    url: "https://danbooru.donmai.us/wiki_pages/tag_group:skin_color"
+    notes: >-
+      Cited for the absence it establishes: pale, fair, light, tan, dark, very dark and black
+      skin are community tags without colour values, so they are not a scale to measure on.
+  - type: report
+    title: "Identity in Metaverse: Social VR Lifestyle Survey Deep-dive"
+    authors:
+      - name: "Nem"
+      - family-names: "Bredikhina"
+        given-names: "Liudmila"
+    year: 2024
+    url: "https://note.com/nemchan_nel/"
+    notes: >-
+      n=1,012, fielded 24 June to 12 July 2024, supervised by Dr. Junji Ohyama. Cited for the
+      finding that 66 percent of respondents prefer an avatar unlike their physical selves,
+      which is why the tone sweep is uniform rather than weighted to any population. The
+      survey measures no skin tone and no ethnicity, and its sample is 73.3 percent Japan.

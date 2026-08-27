@@ -1,0 +1,136 @@
+#usda 1.0
+(
+    defaultPrim = "AnimeMaterials"
+    doc = """Procedural anime (MToon) material parameters, stratified for skin-tone equity.
+
+    A material is generated from this layer plus a seed, so the corpus is reproducible from
+    the parameters rather than distributed as pixels.
+
+    MToon extends glTF pbrMetallicRoughness rather than replacing it: the lit colour IS
+    baseColorFactor, and the extension adds a shade colour with no PBR counterpart. That
+    second colour is where tone equity is decided, and nothing in PBR constrains it.
+
+    A SINGLE SHADE MULTIPLIER IS NOT EQUITABLE. At x0.6 the lit-to-shade separation is
+    dE 17.3 at MST 1 and dE 4.8 at MST 10, so the cel terminator that defines the form on a
+    light character is 3.6x weaker on a dark one. The terminator is the shading cue a
+    detector reads, so a flat multiplier builds a detection gap into the corpus and it would
+    later read as a model defect. This layer fixes the CONTRAST instead and lets the
+    multiplier fall out per tone.
+
+    NOTHING DERIVABLE IS STORED. The multiplier, the shade colour and the achieved dE are all
+    functions of the tone and targetDeltaE, so check_anime_materials.py re-derives them and
+    fails when this layer and the solver disagree. Only the tone identity and the two chosen
+    numbers live here.
+
+    THE dark END IS BOUNDED AND THAT IS REPORTED, NOT CLAMPED. Holding dE at 12 needs shade
+    L* 2.9 at MST 10, which is near black. The gate prints the achieved dE per tone so a tone
+    that cannot reach the target is visible rather than silently clipped.
+
+    There is no standard toon surface in USD to carry this. UsdPreviewSurface is a
+    deliberately constrained ubersurface, and MaterialX's NPR library is initial
+    (viewdirection, facingratio, gooch_shade) with no MToon equivalent, so the parameters are
+    authored as typed prims and bound by the renderer.
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Scope "AnimeMaterials"
+{
+    def Scope "ToneScale" (
+        doc = """The Monk Skin Tone scale, 10 rows, identity only.
+
+        CIELAB at D65 is authoritative upstream and the sRGB hex is the published conversion
+        FROM it. Carrying the hex is therefore a substitution, recorded as one: it is what is
+        published in the form this layer could cite, and replacing it with the CIELAB triple
+        is a known outstanding change rather than a refinement nobody asked for."""
+    )
+    {
+        float targetDeltaE = 12.0
+
+        def "MST01"
+        {
+            int monkTone = 1
+            string srgbHex = "#f6ede4"
+        }
+        def "MST02"
+        {
+            int monkTone = 2
+            string srgbHex = "#f3e7db"
+        }
+        def "MST03"
+        {
+            int monkTone = 3
+            string srgbHex = "#f7ead0"
+        }
+        def "MST04"
+        {
+            int monkTone = 4
+            string srgbHex = "#eadaba"
+        }
+        def "MST05"
+        {
+            int monkTone = 5
+            string srgbHex = "#d7bd96"
+        }
+        def "MST06"
+        {
+            int monkTone = 6
+            string srgbHex = "#a07e56"
+        }
+        def "MST07"
+        {
+            int monkTone = 7
+            string srgbHex = "#825c43"
+        }
+        def "MST08"
+        {
+            int monkTone = 8
+            string srgbHex = "#604134"
+        }
+        def "MST09"
+        {
+            int monkTone = 9
+            string srgbHex = "#3a312a"
+        }
+        def "MST10"
+        {
+            int monkTone = 10
+            string srgbHex = "#292420"
+        }
+    }
+
+    def Scope "SampledAxes" (
+        doc = """Sampled per material, uniformly, with the SAME distribution for every tone.
+        Equal distributions across tones are what make this a controlled comparison: a tone
+        that also drew a different terminator distribution would confound the two, and the
+        detection gap could no longer be attributed to tone.
+
+        EVERY NAME HERE IS A PARAMETER `mtoon.py` IMPLEMENTS, and check_anime_materials.py
+        holds the two against each other. An earlier revision carried `shadeHueShiftDegrees`,
+        which is not an MToon parameter at all, and two commits claimed to have renamed these
+        axes while matching nothing.
+
+        NOT SAMPLED, AND NAMED RATHER THAN OMITTED: `giEqualizationFactor`,
+        `outlineWidthFactor` and every texture-valued parameter. The model implements no
+        global illumination and no outline, so declaring them would sample an axis nothing
+        reads."""
+    )
+    {
+        float2 shadingToonyFactor = (0, 1)
+        float2 shadingShiftFactor = (-1, 1)
+        float2 parametricRimLiftFactor = (0, 1)
+        float2 parametricRimFresnelPowerFactor = (1, 5)
+        float2 rimLightingMixFactor = (0, 1)
+    }
+
+    def Scope "Provenance"
+    {
+        string materialModel = "VRMC_materials_mtoon-1.0"
+        string shadingModel = "mtoon.py"
+        string renderNote = "MToon is not a BSDF; rendered by mtoon_integrator.py"
+        string toneScale = "Monk Skin Tone, 10 levels, CIELAB at D65"
+        string gate = "check_anime_materials.py"
+        string citation = "anime-materials.cff"
+    }
+}
