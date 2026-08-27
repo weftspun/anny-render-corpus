@@ -203,6 +203,30 @@ not scale invariant, so the same material at two exposures does not give the sam
 targets have to be verified at the exposure the viewer uses rather than at ours, and that
 check does not exist yet.
 
+## What it costs to render
+
+The shading is Slang compiled to C++ and called through ctypes; the intersection is Mitsuba
+in `llvm_ad_rgb`. Both measured on this desk, at 3840x2160.
+
+| | per pixel | per 4K frame |
+| --- | ---: | ---: |
+| Python SamplingIntegrator, scalar_rgb | 102,000 ns | 848 s |
+| G-buffer, llvm_ad_rgb | 48.1 ns | 0.399 s |
+| MToon shading, Slang to C++ | 14.1 ns | 0.117 s |
+| **G-buffer plus shading** | **62.2 ns** | **0.516 s** |
+
+One second of 4K60 is 31 s of render against 14 hours before, and ten seconds is 5.2 minutes
+against 141 hours. The shading is no longer the cost: intersection is 77 per cent of it.
+
+The speedup on the shading alone is 1,272x, 14.1 ns against 17,910. That is not an
+optimisation of the same code, it is a different execution model: the Python integrator
+crossed into the interpreter once per sample.
+
+`check_mtoon_slang.py` holds the kernel against `mtoon.py`, which is held against three-vrm,
+so the chain reaches the reference implementation. The two agree to 7e-08 against a float32
+epsilon of 1.19e-07, and a control asserts a changed parameter DOES change the answer, so the
+agreement is not two constants matching.
+
 ## Constructed and generated, kept apart
 
 Renders, depth maps and pose skeletons are **constructed**: deterministic from assets held
