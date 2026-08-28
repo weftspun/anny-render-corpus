@@ -25,7 +25,7 @@
 # `workspace`, not `project`: pixi 0.76 deprecates the older spelling and warns on every
 # invocation, and a warning nobody can act on trains people to ignore warnings.
 [workspace]
-name = "dataflow-coco-gemx"
+name = "anny-render-corpus"
 version = "0.1.0"
 description = "ANNY render corpus: poses in, labelled frames out"
 channels = ["conda-forge"]
