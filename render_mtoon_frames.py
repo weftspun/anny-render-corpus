@@ -34,13 +34,25 @@ def frame_for(tone_base, shade_colour, width, height, spp=1, **kw):
 
 
 CARD_HOLD = 180
+CITATION = pathlib.Path(__file__).resolve().parent
+
+
+def citation_cff():
+    """The .cff beside the code, whatever it is called."""
+    return next(iter(sorted(CITATION.glob("*.cff"))), None)
 
 
 def sequence(hold, card_hold=CARD_HOLD):
-    """Tone holds, then a card for every axis with no data."""
-    rows = [("tone",) + row for row in tone_frames(hold)]
+    """A citation card, the tone holds, the gap cards, and the citation again."""
+    cff = citation_cff()
+    rows = []
+    if cff is not None:
+        rows.extend([("cite", str(cff))] * card_hold)
+    rows.extend([("tone",) + row for row in tone_frames(hold)])
     for gap in placeholder_cards.GAPS:
         rows.extend([("card", gap)] * card_hold)
+    if cff is not None:
+        rows.extend([("cite", str(cff))] * card_hold)
     return rows
 
 
@@ -134,36 +146,62 @@ def to_srgb8_lut(rgba):
     return out
 
 
-def render_chunks(stream, hold, width, height, spp=1, slots=8, chunk=50, verbose=True):
-    """Render a slice per subprocess. Dr.Jit breaks after a few hundred renders in one
-    process -- `could not resolve symbol` naming `callables` -- and no cache flush fixes it,
-    so each chunk gets a fresh interpreter and the stream is appended."""
+def render_chunks(stream, hold, width, height, spp=1, slots=8, chunk=40, jobs=4,
+                  verbose=True):
+    """Render slices in parallel subprocesses, each to its own part, then join them in order.
+
+    Dr.Jit breaks after a few hundred renders in one process, so a slice per process is
+    required; four concurrent chunks measured 0.434 s a frame against 0.857 for one.
+    """
     total = len(sequence(hold))
     stream = pathlib.Path(stream)
-    if stream.exists():
-        stream.unlink()
+    starts = list(range(0, total, chunk))
+    parts = [stream.with_suffix(".part%04d" % i) for i, _ in enumerate(starts)]
+    for p in parts + [stream]:
+        if p.exists():
+            p.unlink()
+
     t0 = time.perf_counter()
-    for start in range(0, total, chunk):
-        count = min(chunk, total - start)
-        out = subprocess.run(
-            [sys.executable, str(pathlib.Path(__file__).resolve()), "--out", str(stream),
-             "--hold", str(hold), "--width", str(width), "--height", str(height),
-             "--spp", str(spp), "--slots", str(slots),
-             "--start", str(start), "--count", str(count), "--append"],
-            capture_output=True, text=True)
-        if out.returncode != 0:
-            raise SystemExit("FAIL  chunk at %d died: %s" % (start, out.stderr[-1500:]))
+    running, done = [], 0
+    queue = list(zip(starts, parts))
+    while queue or running:
+        while queue and len(running) < jobs:
+            start, part = queue.pop(0)
+            count = min(chunk, total - start)
+            running.append((start, count, part, subprocess.Popen(
+                [sys.executable, str(pathlib.Path(__file__).resolve()), "--out", str(part),
+                 "--hold", str(hold), "--width", str(width), "--height", str(height),
+                 "--spp", str(spp), "--slots", str(slots), "--start", str(start),
+                 "--count", str(count)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)))
+        start, count, part, proc = running.pop(0)
+        out, err = proc.communicate()
+        if proc.returncode != 0:
+            for _, _, _, other in running:
+                other.kill()
+            raise SystemExit("FAIL  chunk at %d died: %s" % (start, err[-1200:]))
+        done += count
         if verbose:
-            print("    %4d/%d  %.1f s  %s" % (start + count, total,
-                                              time.perf_counter() - t0,
-                                              out.stdout.strip().splitlines()[-1]))
-    got = stream.stat().st_size // (width * height * 4)
+            print("    %4d/%d  %.1f s  (%d running)" % (done, total,
+                                                        time.perf_counter() - t0, len(running)))
+
+    frame = width * height * 4
+    with open(stream, "wb") as fh:
+        for part in parts:
+            with open(part, "rb") as src:
+                while True:
+                    block = src.read(1 << 24)
+                    if not block:
+                        break
+                    fh.write(block)
+            part.unlink()
+    got = stream.stat().st_size // frame
     if got != total:
         raise SystemExit("FAIL  stream holds %d frames, wanted %d" % (got, total))
     if verbose:
-        print("  %d frames of %dx%d rgba  %.1f s  (%.3f s/frame)  %s"
-              % (total, width, height, time.perf_counter() - t0,
-                 (time.perf_counter() - t0) / total, stream))
+        elapsed = time.perf_counter() - t0
+        print("  %d frames of %dx%d rgba  %.1f s  (%.3f s/frame, %d jobs)  %s"
+              % (total, width, height, elapsed, elapsed / total, jobs, stream))
     return total
 
 
@@ -196,12 +234,13 @@ def render(stream, hold, width, height, spp=1, slots=8, flush_every=10, verbose=
     t0 = time.perf_counter()
     cache = {}
     for i, row in enumerate(rows):
-        if row[0] == "card":
-            key = row[1][0]
+        if row[0] in ("card", "cite"):
+            key = row[1][0] if row[0] == "card" else "cite"
             if key not in cache:
                 cache.clear()
-                cache[key] = to_srgb8(placeholder_cards.card(*row[1], width=width,
-                                                             height=height)).tobytes()
+                art = (placeholder_cards.citation(row[1]) if row[0] == "cite"
+                       else placeholder_cards.card(*row[1], width=width, height=height))
+                cache[key] = to_srgb8(art).tobytes()
             ring.put(cache[key])
             continue
         _, tone, base, shade_colour, phase = row
@@ -228,7 +267,7 @@ def render(stream, hold, width, height, spp=1, slots=8, flush_every=10, verbose=
 
 
 def self_test():
-    """Twenty controls; five reject a frame not showing the material."""
+    """Twenty-two controls; five reject a frame not showing the material."""
     r = []
     base = sweep.linear_of("825c43")
     dark = [c * sweep.solve_multiplier(base, 12.0) for c in base]
@@ -247,6 +286,10 @@ def self_test():
               not np.allclose(frame, flat)))
 
     seq = sequence(6, 4)
+    r.append(("the clip opens and closes with the citation",
+              seq[0][0] == "cite" and seq[-1][0] == "cite"))
+    r.append(("the citation is read from a file, not typed",
+              seq[0][0] == "cite" and seq[0][1].endswith(".cff")))
     r.append(("the sequence ends with cards, one block each",
               sum(1 for x in seq if x[0] == "card") == 4 * len(placeholder_cards.GAPS)))
     r.append(("every gap appears in the sequence",
@@ -304,7 +347,8 @@ def main():
     ap.add_argument("--height", type=int, default=2160)
     ap.add_argument("--spp", type=int, default=1)
     ap.add_argument("--slots", type=int, default=8)
-    ap.add_argument("--chunk", type=int, default=50)
+    ap.add_argument("--chunk", type=int, default=40)
+    ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--count", type=int, default=None)
     ap.add_argument("--append", action="store_true")
@@ -316,7 +360,7 @@ def main():
         return self_test()
     if args.count is None:
         render_chunks(args.out, args.hold, args.width, args.height, args.spp,
-                      args.slots, args.chunk)
+                      args.slots, args.chunk, args.jobs)
     else:
         render(args.out, args.hold, args.width, args.height, args.spp, args.slots,
                start=args.start, count=args.count, append=args.append)

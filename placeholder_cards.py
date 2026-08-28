@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import pathlib
 import sys
 
@@ -75,12 +76,37 @@ def card(title, verdict, *lines, width=3840, height=2160):
     return out
 
 
+def wrap(text, width=64):
+    out, line = [], ""
+    for word in text.split():
+        if len(line) + len(word) + 1 > width:
+            out.append(line)
+            line = word
+        else:
+            line = (line + " " + word).strip()
+    if line:
+        out.append(line)
+    return out
+
+
+def citation(cff_path, lines=9):
+    """The citation as a card, read from the .cff so the two cannot disagree."""
+    import yaml
+    d = yaml.safe_load(io.open(cff_path, encoding="utf-8").read())
+    who = ", ".join(a.get("name") or "%s %s" % (a.get("given-names", ""),
+                                                a.get("family-names", "")).strip()
+                    for a in d.get("authors", []))
+    body = ["cff-version %s   %s   %s" % (d["cff-version"], who, d["license"]), ""]
+    body += wrap(" ".join(d.get("abstract", "").split()))[:lines]
+    return card(d["title"], d["license"], *body)
+
+
 def cards(width=3840, height=2160):
     return [card(*gap, width=width, height=height) for gap in GAPS]
 
 
 def self_test():
-    """Nine controls. Four must reject a card set that hides a gap."""
+    """Thirteen controls. Four must reject a card set that hides a gap."""
     r = []
     one = card(*GAPS[0], width=640, height=360)
     r.append(("a card is a float RGBA frame",
@@ -101,6 +127,22 @@ def self_test():
     r.append(("every gap names a verdict", all(len(g) >= 3 and g[1] for g in GAPS)))
     r.append(("every gap carries at least one line of why",
               all(len(g) >= 3 for g in GAPS)))
+
+    cff = next(iter(sorted(pathlib.Path(__file__).resolve().parent.glob("*.cff"))), None)
+    if cff is None:
+        r.append(("a citation card can be read from a .cff", False))
+    else:
+        import yaml
+        d = yaml.safe_load(io.open(cff, encoding="utf-8").read())
+        cit = citation(cff)
+        r.append(("a citation card renders from the .cff",
+                  cit.shape[2] == 4 and float(cit[..., 3].max()) > 0.99))
+        r.append(("the card carries more ink than a gap card",
+                  (cit[..., 3] > 0.5).mean() > (one[..., 3] > 0.5).mean()))
+        stem = __import__("re").sub(r"\W+", "-", d["title"].lower()).strip("-")
+        r.append(("the filename stem derives from the title, per RFD 1137 step 10",
+                  cff.stem == stem))
+    r.append(("wrap keeps every word", " ".join(wrap("a b c d e", 3)) == "a b c d e"))
 
     bad = sum(1 for _, ok in r if not ok)
     for name, ok in r:

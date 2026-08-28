@@ -42,6 +42,7 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 python = "3.11.*"
 numpy = ">=2.0"
 pillow = ">=10.0"
+pyyaml = ">=6.0"
 
 [pypi-dependencies]
 # Pinned exactly. The renderer is a measuring instrument, and an instrument that changes
