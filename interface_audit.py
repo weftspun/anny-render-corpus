@@ -200,10 +200,16 @@ def main():
     print("\nEXPRESSION INTERFACE")
     fa = getattr(model, "facial_action_labels", None)
     if fa is None:
-        unchecked("ANNY facial_actions <-> ARKit-52", "no facial_action_labels attribute")
+        unchecked("ANNY facial_actions <-> the 52 blendshapes", "no facial_action_labels attribute")
     else:
-        ok("ANNY facial_actions count matches ARKit-52", len(fa) == 52,
-           "%d actions" % len(fa), "%d actions, expected 52" % len(fa))
+        # BY NAME, NOT BY COUNT: two sets of 52 can be 52 different things.
+        import check_facial_actions
+        absent_anny, absent_standard, _, _ = check_facial_actions.compare(fa)
+        ok("ANNY facial_actions are the 52 blendshapes BY NAME",
+           not absent_anny and not absent_standard,
+           "%d actions, every name in both" % len(fa),
+           "%d actions; %d standard names absent from ANNY, %d the other way"
+           % (len(fa), len(absent_anny), len(absent_standard)))
 
     print("\nCORPUS BOUNDARIES")
     unchecked("train / val split contamination",
