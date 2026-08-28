@@ -3,10 +3,12 @@
 The differential test behind `mtoon.py`: our MToon 1.0 against `@pixiv/three-vrm`, the
 reference implementation, rendered in headless Chromium and compared pixel for pixel.
 
-    npm init -y
-    npm install three @pixiv/three-vrm playwright
+    npm ci
     npx playwright install chromium
     python ../check_mtoon_reference.py --self-test
+
+`npm ci` installs the lockfile exactly. The versions below are what the table was
+measured against, and an unpinned install makes a later run incomparable to it.
 
 The camera is orthographic and framed exactly to the unit sphere, so pixel (u, v) carries
 normal (u, v, sqrt(1 - u^2 - v^2)). The comparison needs no plateau finding and no fitting.
