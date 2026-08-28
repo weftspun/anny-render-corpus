@@ -84,5 +84,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.8.1
         with:
           environments: anny
+      # `--pose-libraries` is NOT run here. It exits non-zero when no dataset root is
+      # reachable, which is correct on a desk that should hold them and meaningless on a
+      # runner that never will. Gating on it would fail this job for a fact about the
+      # machine rather than about the repository.
       - run: pixi run -e anny python check_readme_claims.py
-      - run: pixi run -e anny python check_readme_claims.py --pose-libraries
