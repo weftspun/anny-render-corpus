@@ -331,7 +331,31 @@ torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
 # describes. Torch above is the CPU index and rfdetr follows it rather than pulling its own.
 rfdetr = "*"
 
+# PANDAS AND PYARROW, BECAUSE THE CORPUS GATE NEEDED BOTH HALVES AND HAD NEITHER PLACE.
+# `preflight_audit.py` reads the corpus with pandas and decodes it with `anny_rig`, and
+# `sample_identities.py` writes parquet from a torch sample. torch lived here and parquet
+# lived in `corpus`, so both files could run in no environment at all -- the 29-check gate
+# that is supposed to run before a render had never executed anywhere.
+#
+# From PyPI, following the numpy note above: conda-forge pandas beside PyPI torch is the
+# same two-OpenMP-runtimes abort that comment describes.
+pandas = ">=2.0"
+pyarrow = ">=15"
+
 [feature.anny.tasks]
 # Reads ANNY's own facial action labels and compares them against the 52-blendshape standard by NAME, in
 # both directions -- which is the check `interface_audit.py` states as a count.
 facs = "python check_facial_actions.py"
+
+# A STUB CORPUS, BECAUSE THE GATE HAD NOTHING TO GATE. `preflight_audit.py` and
+# `test_preflight.py` both take a corpus, and no corpus is in the repository, so neither had
+# a way to run. Generated rather than committed: `sample_identities.py` is deterministic
+# given its seed, so the stub is reproducible without a parquet blob in the tree, and
+# generating it exercises the sampler as well.
+#
+# 3000 identities, not fewer. Below about that the detection-floor check fails on its own
+# terms -- a 200-identity stub reports 28 checks rather than 29, because a subgroup check
+# never fires, and that reads as a missing check rather than as a small corpus.
+stub-corpus = "python sample_identities.py --out build/stub-corpus --count 3000"
+preflight = { cmd = "python preflight_audit.py build/stub-corpus", depends-on = ["stub-corpus"] }
+preflight-red-green = { cmd = "python test_preflight.py build/stub-corpus", depends-on = ["stub-corpus"] }
