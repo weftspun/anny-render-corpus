@@ -1,0 +1,15 @@
+# The last measured value of a claim whose source can go out of reach, so that a share
+# being unmounted reports a record instead of an error.
+#
+#   name  value  measured-on  where-it-was-measured
+#
+# READ ONLY. `check_readme_claims.py` never writes here. An entry means somebody ran the
+# measurement and wrote down what it said, which is the only thing that makes it worth
+# trusting later. A number this script had put here itself would be a number nobody
+# measured, cached and then read back as though it had been.
+#
+# A cached claim is reported CACHED and named in the summary, never as measured, and it
+# still fails if it disagrees with the README. Delete a line when the source is reachable
+# again and the real measurement takes over; do not update one to make a run go green.
+
+bvh_clip_count  810  2026-08-24  O:/Documents/Datasets/dataset-100style-mocap/unpacked/100STYLE
