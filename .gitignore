@@ -20,3 +20,6 @@ __pycache__/
 # tree usable meanwhile; it is not the answer.
 frames4k/
 *.rgba
+
+# Per-desk dataset roots, replacing dataset-roots.txt on this machine only.
+dataset-roots.local.txt

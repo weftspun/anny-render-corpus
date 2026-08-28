@@ -1,0 +1,16 @@
+# Where pose libraries and other corpus inputs are looked for. One path per line.
+#
+# This is data, not code: a root is a per-desk fact, and a list compiled into a script is
+# one nobody can correct without a commit. `check_readme_claims.py --pose-libraries`
+# reads it and reports what it finds.
+#
+# For a path only this machine has, write `dataset-roots.local.txt` beside this file. It
+# is gitignored and it replaces this list rather than adding to it, which is the same
+# split `settings.json` and `settings.local.json` use in `.claude`.
+#
+# A root that does not exist is skipped, not an error. No root at all IS an error: it
+# means nothing was configured, and a lookup that answered anyway would be reporting an
+# absence as a measurement.
+
+O:/Documents/Datasets
+G:/Shared drives/0360 - Datasets Allowlist
