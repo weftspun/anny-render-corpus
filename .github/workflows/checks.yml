@@ -57,6 +57,11 @@ jobs:
       - run: pixi run -e anny python check_view_selection.py
       - run: pixi run -e anny python check_corpus_model.py --self-test
       - run: pixi run -e anny python interface_audit.py
+      # Self-contained and already passing, and CI was not running any of them. Each proves
+      # its own checks can fail: 4 controls, 3 corruptions, 6 corruptions respectively.
+      - run: pixi run -e anny python test_topology_fk.py
+      - run: pixi run -e anny python test_coco_fetch_list.py
+      - run: pixi run -e anny python test_edit_provenance.py
       # THE CORPUS GATE, ON A GENERATED STUB. This is the exception to "controls only"
       # above and earns it: the stub is sampled deterministically from a seed, so it is
       # real corpus data rather than a corpus this runner happens to hold. The red/green
@@ -67,26 +72,20 @@ jobs:
 
   # THE README'S OWN NUMBERS, WHICH IS THE CLAIM THIS REPOSITORY OPENS WITH.
   #
-  # Not gating on the exit code. Two claims need the `corpus` environment and one is answered
-  # from `claim-cache.txt` because its pose library is unreachable from a runner, so a green
-  # exit is not available here and demanding one would only teach people to delete claims.
-  # The output is recorded so drift is visible in the log, and `continue-on-error` says that
-  # rather than hiding it behind a check mark.
+  # Gating on the exit code, which it could not do until now. This job was
+  # `continue-on-error` across two environments, because the schema pair needed `corpus` and
+  # the rig measurements needed `anny` and nothing had both. Declaring pandas and pyarrow in
+  # `anny` for the corpus gate settled that as a side effect: one run derives all eleven, so
+  # the job can fail properly instead of being something a reader learns to scroll past.
   readme-claims:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: prefix-dev/setup-pixi@v0.8.1
         with:
-          environments: anny corpus
-      # Both halves, because no single environment verifies all eleven claims: the schema
-      # pair needs `corpus` and the rig measurements need `anny`. One run alone would leave
-      # the other half reading as ERROR with nothing saying it was checked elsewhere.
-      # `if: always()`, because the first step exits non-zero by design and steps otherwise
-      # stop at the first failure -- which would leave the half it does verify unrecorded.
+          environments: anny
+      # `--pose-libraries` is NOT run here. It exits non-zero when no dataset root is
+      # reachable, which is correct on a desk that should hold them and meaningless on a
+      # runner that never will. Gating on it would fail this job for a fact about the
+      # machine rather than about the repository.
       - run: pixi run -e anny python check_readme_claims.py
-      - run: pixi run -e corpus python check_readme_claims.py
-        if: always()
-      - run: pixi run -e anny python check_readme_claims.py --pose-libraries
-        if: always()

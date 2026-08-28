@@ -307,14 +307,14 @@ caught by at least two controls, none surviving.
 5. **The exposure the tone targets are verified at.** The ladder solves in material space
    and the renderer is pi times brighter than a three-vrm viewer, so the rendered dE has
    not been checked at the exposure a viewer uses.
-9. **Skin tone in the render path.** The UV reaches the model and stops there; nothing samples
+6. **Skin tone in the render path.** The UV reaches the model and stops there; nothing samples
    it, so the anime tone layer has no renderer to drive yet.
-6. **Subsurface.** The scene material is `principled` with no subsurface, while an sss map
+7. **Subsurface.** The scene material is `principled` with no subsurface, while an sss map
    ships unused. Dark and light albedos do not merely scale in brightness, so an albedo-only
    tone sweep understates real variation.
-7. **Files under 100 non-blank lines** are outside the comment-density ladder, and
+8. **Files under 100 non-blank lines** are outside the comment-density ladder, and
    `comment_density.py` is itself under that floor.
-8. **Demographic coverage.** ANNY offers three ethnicity axes and GNM four classes, and both
+9. **Demographic coverage.** ANNY offers three ethnicity axes and GNM four classes, and both
    omit South Asian, Hispanic or Latino, and Pacific Islander. The last is a stated target
    population. Neither set is coverage and neither should be reported as such.
 

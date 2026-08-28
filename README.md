@@ -1,4 +1,4 @@
-# dataflow-coco-gemx
+# anny-render-corpus
 
 The ANNY render corpus pipeline: schema, identity sampling, the canonical rigged model,
 the audits that gate a render run, and the 100STYLE pose reader.
