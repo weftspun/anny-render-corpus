@@ -248,7 +248,7 @@ def main(path=None):
     print("%-24s %12s %12s %10s  %s" % ("claim", "README", "measured", "tol", "verdict"))
     print("-" * 76)
     bad = 0
-    cached = []
+    cached, stale = [], []
     cache = claim_cache()
 
     import io
@@ -286,10 +286,21 @@ def main(path=None):
             continue
         ok = abs(got - stated) <= tol
         bad += 0 if ok else 1
-        print("%-24s %12.3f %12.3f %10.3f  %s"
-              % (name, stated, got, tol, "ok" if ok else "DRIFTED"))
+        note = ""
+        if name in cache:
+            # The live measurement already won; the entry is now a record nothing reads.
+            stale.append(name)
+            note = "  (cache entry now superseded)"
+        print("%-24s %12.3f %12.3f %10.3f  %s%s"
+              % (name, stated, got, tol, "ok" if ok else "DRIFTED", note))
 
     print()
+    if stale:
+        print("%d cache entry/entries are superseded: the source is reachable again and the"
+              % len(stale))
+        print("live measurement is what ran. Delete these lines from %s: %s."
+              % (CACHE_FILE, ", ".join(stale)))
+        print()
     if cached:
         print("%d claim(s) answered from %s because the source was unreachable: %s."
               % (len(cached), CACHE_FILE, ", ".join(cached)))
@@ -426,6 +437,27 @@ def self_test():
             pass
     after = open(path, "rb").read() if os.path.exists(path) else None
     r.append(("running the gate never writes the cache", before == after))
+
+    # Planted rather than waited for. globals(), because run as a script this file is
+    # `__main__` and importing it by name would patch a second, unused copy.
+    g = globals()
+    real = g["claim_cache"]
+    g["claim_cache"] = lambda here=None: {
+        "anny_bone_count": {"value": 104.0, "measured": "2026-01-01", "where": "planted"}}
+    try:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            try:
+                main(os.path.join(here, "README.md"))
+            except SystemExit:
+                pass
+        text = out.getvalue()
+    finally:
+        g["claim_cache"] = real
+    r.append(("a superseded entry is named once its source returns",
+              "Delete these lines from %s: anny_bone_count." % CACHE_FILE in text))
+    r.append(("a superseded entry does not make the run fail",
+              "104.000      104.000" in text))
 
     for name, ok in r:
         print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
