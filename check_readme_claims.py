@@ -23,8 +23,15 @@ skipped -- a silent skip reads exactly like a pass, which is a failure mode this
 has hit three separate times.
 """
 
+import glob
+import os
 import re
 import sys
+
+DATASET_ROOTS = (
+    "O:/Documents/Datasets",
+    "G:/Shared drives/0360 - Datasets Allowlist",
+)
 
 
 def measure_twist_rmse(side):
@@ -87,10 +94,21 @@ def measure_interfaces_unchecked():
     return float(sum(1 for r in interface_audit.RESULTS if r[1] == "UNCHECKED"))
 
 
+def find_dataset(leaf, roots=DATASET_ROOTS, depth=4):
+    """The first directory named `leaf` under any known dataset root; raises if absent."""
+    for root in roots:
+        for d in range(depth + 1):
+            hits = [h for h in glob.glob(os.path.join(root, *(["*"] * d), leaf))
+                    if os.path.isdir(h)]
+            if hits:
+                return sorted(hits)[0]
+    raise FileNotFoundError(
+        "no directory named %r within %d levels of: %s"
+        % (leaf, depth, "; ".join(roots)))
+
+
 def measure_bvh_clip_count():
-    import glob
-    root = ("O:/Documents/Datasets/dataset-100style-mocap/unpacked/100STYLE")
-    return float(len(glob.glob(root + "/*/*.bvh")))
+    return float(len(glob.glob(find_dataset("100STYLE") + "/*/*.bvh")))
 
 
 def measure_schema_relations():
@@ -173,5 +191,46 @@ def main():
     return 1 if bad else 0
 
 
+def _misses(leaf, root, depth):
+    try:
+        find_dataset(leaf, roots=(root,), depth=depth)
+        return False
+    except FileNotFoundError:
+        return True
+
+
+def self_test():
+    """Five controls. Three must reject a lookup that answers for a dataset it never found."""
+    r = []
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "flat"))
+        os.makedirs(os.path.join(tmp, "a", "b", "c", "deep"))
+        r.append(("a directory at the root is found",
+                  find_dataset("flat", roots=(tmp,)).endswith("flat")))
+        r.append(("a directory nested below it is found",
+                  find_dataset("deep", roots=(tmp,)).endswith("deep")))
+        r.append(("a directory past the depth bound is not found",
+                  _misses("deep", tmp, depth=2)))
+    try:
+        find_dataset("no-such-dataset", roots=("Z:/nope",))
+        r.append(("an absent dataset raises rather than returning", False))
+    except FileNotFoundError:
+        r.append(("an absent dataset raises rather than returning", True))
+    try:
+        got = measure_bvh_clip_count()
+        r.append(("an unreachable root is never counted as zero clips", got > 0))
+    except FileNotFoundError:
+        r.append(("an unreachable root is never counted as zero clips", True))
+
+    for name, ok in r:
+        print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
+    bad = sum(1 for _, ok in r if not ok)
+    print("  %d of %d controls fired." % (len(r) - bad, len(r)))
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
     sys.exit(main())
