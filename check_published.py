@@ -31,6 +31,60 @@ def hf_token(item="rkuylld4umpmaxvlvbp5q7kgii"):
     return token
 
 
+def resolve_records(rows, served):
+    """Every image a record points at, against the file list the hub actually serves.
+
+    Split out from `main` so a control can drive it: the network path cannot be a control,
+    and this is the check that matters -- a record naming a local absolute path is inert for
+    everybody but us, and survives a card review because cards do not resolve paths.
+    """
+    referenced, missing, absolute = set(), [], []
+    for r in rows:
+        for q in list(r.get("input_images", [])) + [r["output_image"]]:
+            referenced.add(q)
+            if ":" in q or q.startswith("/"):
+                absolute.append(q)
+            elif q not in served:
+                missing.append(q)
+    return referenced, missing, absolute
+
+
+def self_test():
+    """Six controls. Five must reject records a hub could not serve."""
+    served = {"images/a.png", "images/b.png"}
+    ok_rows = [{"input_images": ["images/a.png"], "output_image": "images/b.png"}]
+    r = []
+
+    ref, missing, absolute = resolve_records(ok_rows, served)
+    r.append(("records the repo serves are accepted",
+              not missing and not absolute and ref == served))
+    r.append(("a record naming a file the repo does not serve is caught",
+              resolve_records([{"input_images": ["images/gone.png"],
+                                "output_image": "images/b.png"}], served)[1]
+              == ["images/gone.png"]))
+    r.append(("a windows absolute path is caught, not counted as served",
+              resolve_records([{"input_images": ["O:/local/a.png"],
+                                "output_image": "images/b.png"}], served)[2]
+              == ["O:/local/a.png"]))
+    r.append(("a posix absolute path is caught",
+              resolve_records([{"input_images": ["/home/me/a.png"],
+                                "output_image": "images/b.png"}], served)[2]
+              == ["/home/me/a.png"]))
+    r.append(("the output image is checked, not only the inputs",
+              resolve_records([{"input_images": ["images/a.png"],
+                                "output_image": "images/gone.png"}], served)[1]
+              == ["images/gone.png"]))
+    r.append(("a record with no inputs still checks its output",
+              resolve_records([{"output_image": "images/gone.png"}], served)[1]
+              == ["images/gone.png"]))
+
+    for name, ok in r:
+        print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
+    bad = sum(1 for _, ok in r if not ok)
+    print("  %d of %d controls fired." % (len(r) - bad, len(r)))
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--namespace", default="chibifire")
@@ -124,14 +178,7 @@ def main() -> int:
             problems.append("%s missing: %s" % (name, str(error)[:80]))
             continue
         rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
-        referenced, missing, absolute = set(), [], []
-        for r in rows:
-            for q in list(r.get("input_images", [])) + [r["output_image"]]:
-                referenced.add(q)
-                if ":" in q or q.startswith("/"):
-                    absolute.append(q)
-                elif q not in served:
-                    missing.append(q)
+        referenced, missing, absolute = resolve_records(rows, served)
         print("  %s %-28s %3d rows, %3d distinct files, %d missing, %d absolute"
               % ("ok  " if not missing and not absolute else "BAD ",
                  name, len(rows), len(referenced), len(missing), len(absolute)))
@@ -205,4 +252,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
     sys.exit(main())

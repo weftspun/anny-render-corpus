@@ -114,8 +114,20 @@ def read_usd(path):
     names = list(skel_prim.GetAttribute("annyJointNames").Get() or [])
     binds = np.asarray(skel.GetBindTransformsAttr().Get(), dtype=np.float64)
     joints = binds[:, 3, :3]          # USD is row-vector, so translation is the last row
+
+    # Faces and bases, WITHOUT WHICH TWO CHECKS REPORT NOT RUN ON EVERY ARCHIVE. USD carries
+    # both; not reading them left the mirror and handedness tests dead on the .usda path.
+    counts = UsdGeom.Mesh(mesh).GetFaceVertexCountsAttr().Get()
+    indices = UsdGeom.Mesh(mesh).GetFaceVertexIndicesAttr().Get()
+    faces, at = [], 0
+    for n in (counts or []):
+        fan = indices[at:at + n]
+        faces.extend([fan[0], fan[i], fan[i + 1]] for i in range(1, n - 1))
+        at += n
     return {
         "points": points, "joints": joints, "names": names,
+        "faces": np.asarray(faces, dtype=np.int64) if faces else None,
+        "bases": np.transpose(binds, (0, 2, 1)) if len(binds) else None,
         "meters_per_unit": UsdGeom.GetStageMetersPerUnit(stage),
         "up_axis": str(UsdGeom.GetStageUpAxis(stage)),
     }
