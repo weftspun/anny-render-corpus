@@ -94,21 +94,71 @@ def measure_interfaces_unchecked():
     return float(sum(1 for r in interface_audit.RESULTS if r[1] == "UNCHECKED"))
 
 
-def find_dataset(leaf, roots=DATASET_ROOTS, depth=4):
-    """The first directory named `leaf` under any known dataset root; raises if absent."""
+CLIP_SUFFIXES = (".bvh",)
+
+
+def find_pose_library(name, roots=DATASET_ROOTS, depth=4):
+    """The directory of the named pose library; raises when no root holds it."""
     for root in roots:
         for d in range(depth + 1):
-            hits = [h for h in glob.glob(os.path.join(root, *(["*"] * d), leaf))
+            hits = [h for h in glob.glob(os.path.join(root, *(["*"] * d), name))
                     if os.path.isdir(h)]
             if hits:
                 return sorted(hits)[0]
     raise FileNotFoundError(
-        "no directory named %r within %d levels of: %s"
-        % (leaf, depth, "; ".join(roots)))
+        "no pose library named %r within %d levels of: %s"
+        % (name, depth, "; ".join(roots)))
+
+
+def pose_clips(library):
+    """Every motion clip in a pose library, at whatever depth the set organises them."""
+    return sorted(p for p in glob.glob(os.path.join(library, "**", "*"), recursive=True)
+                  if os.path.splitext(p)[1].lower() in CLIP_SUFFIXES)
+
+
+def pose_library_citation(library):
+    """The `.cff` at a pose library's root. CLAUDE.md's pose-source rule makes this the
+    evidence a set is licence-clean, so a library without one cannot be gated on."""
+    beside = sorted(glob.glob(os.path.join(library, "*.cff")))
+    return beside[0] if beside else None
+
+
+def pose_libraries(roots=DATASET_ROOTS, depth=4):
+    """Every reachable pose library, enumerated rather than named, so a set that arrives
+    without anyone editing this file is still seen.
+
+    A library is the nearest ancestor of its clips carrying a `.cff`, because the citation
+    is what marks where a distributed set begins. With no `.cff` anywhere above them the
+    clips are reported at the directory holding them: nothing says where that set ends,
+    which is the same absence that makes it unusable under the pose-source rule.
+    """
+    found = set()
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for base, dirs, files in os.walk(root):
+            rel = os.path.relpath(base, root)
+            if rel != "." and rel.count(os.sep) + 1 >= depth:
+                dirs[:] = []
+            if not any(os.path.splitext(f)[1].lower() in CLIP_SUFFIXES for f in files):
+                continue
+            lib, probe = base, base
+            while probe != root and os.path.dirname(probe) != probe:
+                if glob.glob(os.path.join(probe, "*.cff")):
+                    lib = probe
+                    break
+                probe = os.path.dirname(probe)
+            found.add(lib)
+    return [{"path": lib, "name": os.path.basename(lib), "clips": len(pose_clips(lib)),
+             "citation": pose_library_citation(lib)}
+            for lib in sorted(found)]
+
+
+POSE_LIBRARY = "100STYLE"
 
 
 def measure_bvh_clip_count():
-    return float(len(glob.glob(find_dataset("100STYLE") + "/*/*.bvh")))
+    return float(len(pose_clips(find_pose_library(POSE_LIBRARY))))
 
 
 def measure_schema_relations():
@@ -191,32 +241,71 @@ def main():
     return 1 if bad else 0
 
 
-def _misses(leaf, root, depth):
+def _misses(name, root, depth):
     try:
-        find_dataset(leaf, roots=(root,), depth=depth)
+        find_pose_library(name, roots=(root,), depth=depth)
         return False
     except FileNotFoundError:
         return True
 
 
+def _fixture(tmp, name, clips, cff=True, sub="motions"):
+    lib = os.path.join(tmp, "sets", name)
+    os.makedirs(os.path.join(lib, sub), exist_ok=True)
+    for i in range(clips):
+        open(os.path.join(lib, sub, "take%02d.bvh" % i), "w").close()
+    if cff:
+        open(os.path.join(lib, "CITATION.cff"), "w").close()
+    return lib
+
+
+def report_pose_libraries(roots=DATASET_ROOTS):
+    libs = pose_libraries(roots)
+    if not libs:
+        print("no pose library reachable under: %s" % "; ".join(roots))
+        return 1
+    print("%-28s %8s  %s" % ("library", "clips", "citation"))
+    for lib in libs:
+        print("%-28s %8d  %s" % (lib["name"], lib["clips"],
+                                 lib["citation"] or "NONE -- not licence-clean evidence"))
+    unevidenced = [lib["name"] for lib in libs if not lib["citation"]]
+    if unevidenced:
+        print("\n%d library/libraries carry no .cff. The pose-source rule makes that the"
+              % len(unevidenced))
+        print("evidence a set is licence-clean, so these cannot be gated on: %s"
+              % ", ".join(unevidenced))
+    return 0
+
+
 def self_test():
-    """Five controls. Three must reject a lookup that answers for a dataset it never found."""
+    """Nine controls. Four must reject a lookup that answers for a set it never found."""
     r = []
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, "flat"))
-        os.makedirs(os.path.join(tmp, "a", "b", "c", "deep"))
-        r.append(("a directory at the root is found",
-                  find_dataset("flat", roots=(tmp,)).endswith("flat")))
-        r.append(("a directory nested below it is found",
-                  find_dataset("deep", roots=(tmp,)).endswith("deep")))
-        r.append(("a directory past the depth bound is not found",
-                  _misses("deep", tmp, depth=2)))
-    try:
-        find_dataset("no-such-dataset", roots=("Z:/nope",))
-        r.append(("an absent dataset raises rather than returning", False))
-    except FileNotFoundError:
-        r.append(("an absent dataset raises rather than returning", True))
+        _fixture(tmp, "alpha-motions", 3)
+        _fixture(tmp, "beta-motions", 2, cff=False, sub="a/b")
+        os.makedirs(os.path.join(tmp, "sets", "not-a-pose-set", "docs"))
+
+        r.append(("a pose library is found by name",
+                  find_pose_library("alpha-motions", roots=(tmp,)).endswith("alpha-motions")))
+        r.append(("a library past the depth bound is not found",
+                  _misses("alpha-motions", tmp, depth=0)))
+        r.append(("clips are counted at whatever depth the set organises them",
+                  len(pose_clips(find_pose_library("beta-motions", roots=(tmp,)))) == 2))
+        r.append(("a directory with no clips is not a pose library",
+                  all(lib["name"] != "not-a-pose-set" for lib in pose_libraries((tmp,)))))
+
+        libs = {lib["name"]: lib for lib in pose_libraries((tmp,))}
+        r.append(("an evidenced set is reported at its citation, not at its clips",
+                  "alpha-motions" in libs and libs["alpha-motions"]["clips"] == 3))
+        r.append(("a citation beside a set is found",
+                  libs["alpha-motions"]["citation"] is not None))
+        r.append(("sibling sets are not merged into their parent folder",
+                  "sets" not in libs and len(libs) == 2))
+        unevidenced = [v for v in libs.values() if v["citation"] is None]
+        r.append(("a set with no citation is reported as having none",
+                  len(unevidenced) == 1 and unevidenced[0]["clips"] == 2))
+
     try:
         got = measure_bvh_clip_count()
         r.append(("an unreachable root is never counted as zero clips", got > 0))
@@ -233,4 +322,6 @@ def self_test():
 if __name__ == "__main__":
     if "--self-test" in sys.argv:
         sys.exit(self_test())
+    if "--pose-libraries" in sys.argv:
+        sys.exit(report_pose_libraries())
     sys.exit(main())
