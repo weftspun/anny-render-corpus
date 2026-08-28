@@ -51,6 +51,43 @@ def norm(s):
     return "".join(c for c in str(s).lower() if c.isalnum())
 
 
+def compare(anny_names, arkit=ARKIT_52):
+    """The two sets by normalised name, both directions. Split out so a control can put
+    known-broken input through the same comparison the real run uses."""
+    a = {norm(x): x for x in arkit}
+    n = {norm(x): x for x in anny_names}
+    return sorted(set(a) - set(n)), sorted(set(n) - set(a)), a, n
+
+
+def self_test():
+    """Six controls. Five must reject a set that is not ARKit's 52 by name."""
+    r = []
+    good = list(ARKIT_52)
+    r.append(("the identical set is accepted", compare(good)[:2] == ([], [])))
+    r.append(("cosmetic spelling is not a difference",
+              compare([x.lower().replace("Left", "_left") for x in good])[:2] == ([], [])))
+
+    renamed = good[:-1] + ["cheekPuffed"]
+    missing_arkit, extra_anny, _, _ = compare(renamed)
+    r.append(("a renamed action is caught in both directions",
+              len(missing_arkit) == 1 and len(extra_anny) == 1))
+    r.append(("a dropped action is reported as absent from ANNY",
+              compare(good[:-1])[0] == [norm(good[-1])]))
+    r.append(("an added action is reported as absent from ARKit",
+              compare(good + ["tongueOut2"])[1] == ["tongueout2"]))
+
+    # THE CARDINALITY TRAP THIS FILE EXISTS FOR: 52 names that are not the 52 names.
+    fifty_two_others = good[:51] + ["notAnArkitShape"]
+    r.append(("52 of the wrong names is still rejected",
+              len(fifty_two_others) == 52 and compare(fifty_two_others)[:2] != ([], [])))
+
+    for name, ok in r:
+        print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
+    bad = sum(1 for _, ok in r if not ok)
+    print("  %d of %d controls fired." % (len(r) - bad, len(r)))
+    return 1 if bad else 0
+
+
 def main():
     assert len(ARKIT_52) == 52, f"the ARKit list itself is {len(ARKIT_52)}, not 52"
     assert len(set(map(norm, ARKIT_52))) == 52, "the ARKit list has a duplicate"
@@ -118,4 +155,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(self_test() if "--self-test" in sys.argv else main())
