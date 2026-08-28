@@ -28,10 +28,30 @@ import os
 import re
 import sys
 
-DATASET_ROOTS = (
-    "O:/Documents/Datasets",
-    "G:/Shared drives/0360 - Datasets Allowlist",
-)
+ROOTS_FILE = "dataset-roots.txt"
+ROOTS_LOCAL = "dataset-roots.local.txt"
+
+
+def dataset_roots(here=None):
+    """Where pose libraries are looked for, read from `dataset-roots.txt` or the
+    gitignored `.local` beside it. Not a constant here: a root is a per-desk fact, and
+    a list baked into code is one nobody can correct without a commit."""
+    here = here or os.path.dirname(os.path.abspath(__file__))
+    for name in (ROOTS_LOCAL, ROOTS_FILE):
+        path = os.path.join(here, name)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                return tuple(r for r in (ln.split("#")[0].strip() for ln in fh) if r)
+    return ()
+
+
+def _roots(roots):
+    got = dataset_roots() if roots is None else tuple(roots)
+    if not got:
+        raise FileNotFoundError(
+            "no dataset root configured: write one path per line into %s, or %s "
+            "beside it for this desk only" % (ROOTS_FILE, ROOTS_LOCAL))
+    return got
 
 
 def measure_twist_rmse(side):
@@ -97,8 +117,9 @@ def measure_interfaces_unchecked():
 CLIP_SUFFIXES = (".bvh",)
 
 
-def find_pose_library(name, roots=DATASET_ROOTS, depth=4):
+def find_pose_library(name, roots=None, depth=4):
     """The directory of the named pose library; raises when no root holds it."""
+    roots = _roots(roots)
     for root in roots:
         for d in range(depth + 1):
             hits = [h for h in glob.glob(os.path.join(root, *(["*"] * d), name))
@@ -123,7 +144,7 @@ def pose_library_citation(library):
     return beside[0] if beside else None
 
 
-def pose_libraries(roots=DATASET_ROOTS, depth=4):
+def pose_libraries(roots=None, depth=4):
     """Every reachable pose library, enumerated rather than named, so a set that arrives
     without anyone editing this file is still seen.
 
@@ -132,6 +153,7 @@ def pose_libraries(roots=DATASET_ROOTS, depth=4):
     clips are reported at the directory holding them: nothing says where that set ends,
     which is the same absence that makes it unusable under the pose-source rule.
     """
+    roots = _roots(roots)
     found = set()
     for root in roots:
         if not os.path.isdir(root):
@@ -205,6 +227,7 @@ def main():
     print("%-24s %12s %12s %10s  %s" % ("claim", "README", "measured", "tol", "verdict"))
     print("-" * 76)
     bad = 0
+
     import io
     import contextlib
     for name, stated, tol in claims:
@@ -241,6 +264,19 @@ def main():
     return 1 if bad else 0
 
 
+def write(path, lines):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def _misses_roots():
+    try:
+        _roots(())
+        return False
+    except FileNotFoundError:
+        return True
+
+
 def _misses(name, root, depth):
     try:
         find_pose_library(name, roots=(root,), depth=depth)
@@ -259,7 +295,8 @@ def _fixture(tmp, name, clips, cff=True, sub="motions"):
     return lib
 
 
-def report_pose_libraries(roots=DATASET_ROOTS):
+def report_pose_libraries(roots=None):
+    roots = _roots(roots)
     libs = pose_libraries(roots)
     if not libs:
         print("no pose library reachable under: %s" % "; ".join(roots))
@@ -278,8 +315,9 @@ def report_pose_libraries(roots=DATASET_ROOTS):
 
 
 def self_test():
-    """Nine controls. Four must reject a lookup that answers for a set it never found."""
+    """Twelve controls. Five must reject a lookup that answers for a set it never found."""
     r = []
+
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         _fixture(tmp, "alpha-motions", 3)
@@ -311,6 +349,17 @@ def self_test():
         r.append(("an unreachable root is never counted as zero clips", got > 0))
     except FileNotFoundError:
         r.append(("an unreachable root is never counted as zero clips", True))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        write(os.path.join(tmp, ROOTS_FILE),
+              ["# comment", "", "  X:/one  # trailing", "Y:/two"])
+        r.append(("roots are read from the file, comments and blanks dropped",
+                  dataset_roots(tmp) == ("X:/one", "Y:/two")))
+        write(os.path.join(tmp, ROOTS_LOCAL), ["Z:/local"])
+        r.append(("the local file replaces the tracked one",
+                  dataset_roots(tmp) == ("Z:/local",)))
+    r.append(("no configured root is an error, not an empty answer",
+              _misses_roots()))
 
     for name, ok in r:
         print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
