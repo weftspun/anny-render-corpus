@@ -332,6 +332,6 @@ torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
 rfdetr = "*"
 
 [feature.anny.tasks]
-# Reads ANNY's own facial action labels and compares them against ARKit's 52 by NAME, in
+# Reads ANNY's own facial action labels and compares them against the 52-blendshape standard by NAME, in
 # both directions -- which is the check `interface_audit.py` states as a count.
 facs = "python check_facial_actions.py"

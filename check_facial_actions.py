@@ -1,32 +1,32 @@
-"""Is ANNY's facial-action set ARKit's 52? Compared by NAME, both directions.
+"""Is ANNY's facial-action set the 52-blendshape standard? By NAME, both directions.
 
-WHY THIS IS NOT THE CHECK THAT ALREADY EXISTS. `interface_audit.py` names the interface
-"ANNY facial_actions <-> ARKit-52" and then tests `len(fa) == 52`. A count is the
-convenient proxy; two sets of 52 can be 52 different things, and the quantity that decides
-it is which names are in both. `coco.pth`'s weight map got `searchsorted` and a maximum
-positional difference of zero exactly. This interface got cardinality.
+WHY THIS IS NOT THE CHECK THAT ALREADY EXISTS. `interface_audit.py` names this interface
+and then tests `len(fa) == 52`. A count is the convenient proxy; two sets of 52 can be 52
+different things, and the quantity that decides it is which names are in both. `coco.pth`'s
+weight map got `searchsorted` and a maximum positional difference of zero exactly. This
+interface got cardinality.
 
-WHY IT MATTERS RATHER THAN BEING PEDANTRY. ARKit is FACS-DERIVED and is not FACS: it comes
-from FaceShift's shapes, and the translation is many-to-many in four ways at once. Two
-ARKit shapes collapse to one action unit (mouthSmileLeft and mouthSmileRight are both AU12);
-one ARKit shape spans two (jawOpen is AU26 or AU27); one action unit splits into two ARKit
-shapes (AU17 into mouthShrugUpper and mouthShrugLower); and several map to AD and M codes
-rather than to action units at all.
+WHY IT MATTERS RATHER THAN BEING PEDANTRY. The 52 are FACS-DERIVED and are not FACS, and the
+translation is many-to-many in four ways at once. Two blendshapes collapse to one action unit
+(mouthSmileLeft and mouthSmileRight are both AU12); one blendshape spans two (jawOpen is AU26
+or AU27); one action unit splits into two blendshapes (AU17 into mouthShrugUpper and
+mouthShrugLower); and several map to AD and M codes rather than to action units at all.
 
-So a rig whose labels are FACS action units and a rig whose labels are ARKit blendshapes are
+So a rig whose labels are FACS action units and a rig whose labels are these blendshapes are
 not interchangeable however their counts compare, and getting this wrong is documented rather
 than hypothetical: ICT-FaceKit ships mouthShrugUpper labelled "upper lip raiser" and the
 actual upper-lip-raiser shapes labelled "nasolabial furrow deepener".
 
-Source for the 52: Apple's ARFaceAnchor.BlendShapeLocation. Cross-checked against Ozel's
-ARKit-to-FACS cheat sheet, which tabulates 51 of them and omits tongueOut -- the same 51/52
-split DETAILS.md already records for MediaPipe, from a different direction.
+The 52 names are the industry-common blendshape vocabulary, listed below rather than imported
+so the comparison has something fixed to compare against. A published cheat sheet mapping them
+to FACS tabulates 51 and omits tongueOut -- the same 51/52 split DETAILS.md already records
+for MediaPipe, from a different direction.
 """
 
 import sys
 
-# Apple's ARFaceAnchor.BlendShapeLocation, all 52.
-ARKIT_52 = [
+# The 52-blendshape facial standard, in full.
+BLENDSHAPES_52 = [
     "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight",
     "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
     "eyeBlinkLeft", "eyeBlinkRight", "eyeLookDownLeft", "eyeLookDownRight",
@@ -51,33 +51,33 @@ def norm(s):
     return "".join(c for c in str(s).lower() if c.isalnum())
 
 
-def compare(anny_names, arkit=ARKIT_52):
+def compare(anny_names, standard=BLENDSHAPES_52):
     """The two sets by normalised name, both directions. Split out so a control can put
     known-broken input through the same comparison the real run uses."""
-    a = {norm(x): x for x in arkit}
+    a = {norm(x): x for x in standard}
     n = {norm(x): x for x in anny_names}
     return sorted(set(a) - set(n)), sorted(set(n) - set(a)), a, n
 
 
 def self_test():
-    """Six controls. Five must reject a set that is not ARKit's 52 by name."""
+    """Six controls. Five must reject a set that is not the 52 by name."""
     r = []
-    good = list(ARKIT_52)
+    good = list(BLENDSHAPES_52)
     r.append(("the identical set is accepted", compare(good)[:2] == ([], [])))
     r.append(("cosmetic spelling is not a difference",
               compare([x.lower().replace("Left", "_left") for x in good])[:2] == ([], [])))
 
     renamed = good[:-1] + ["cheekPuffed"]
-    missing_arkit, extra_anny, _, _ = compare(renamed)
+    missing_standard, extra_anny, _, _ = compare(renamed)
     r.append(("a renamed action is caught in both directions",
-              len(missing_arkit) == 1 and len(extra_anny) == 1))
+              len(missing_standard) == 1 and len(extra_anny) == 1))
     r.append(("a dropped action is reported as absent from ANNY",
               compare(good[:-1])[0] == [norm(good[-1])]))
-    r.append(("an added action is reported as absent from ARKit",
+    r.append(("an added action is reported as absent from the standard",
               compare(good + ["tongueOut2"])[1] == ["tongueout2"]))
 
     # THE CARDINALITY TRAP THIS FILE EXISTS FOR: 52 names that are not the 52 names.
-    fifty_two_others = good[:51] + ["notAnArkitShape"]
+    fifty_two_others = good[:51] + ["notAStandardShape"]
     r.append(("52 of the wrong names is still rejected",
               len(fifty_two_others) == 52 and compare(fifty_two_others)[:2] != ([], [])))
 
@@ -89,8 +89,8 @@ def self_test():
 
 
 def main():
-    assert len(ARKIT_52) == 52, f"the ARKit list itself is {len(ARKIT_52)}, not 52"
-    assert len(set(map(norm, ARKIT_52))) == 52, "the ARKit list has a duplicate"
+    assert len(BLENDSHAPES_52) == 52, f"the standard list itself is {len(BLENDSHAPES_52)}, not 52"
+    assert len(set(map(norm, BLENDSHAPES_52))) == 52, "the standard list has a duplicate"
 
     try:
         import anny
@@ -127,29 +127,29 @@ def main():
     labels = [str(x) for x in labels]
     print(f"  ..   ANNY reports {len(labels)} facial actions")
 
-    a, n = {norm(x): x for x in ARKIT_52}, {norm(x): x for x in labels}
+    a, n = {norm(x): x for x in BLENDSHAPES_52}, {norm(x): x for x in labels}
     shared = sorted(set(a) & set(n))
-    only_arkit = sorted(set(a) - set(n))
+    only_standard = sorted(set(a) - set(n))
     only_anny = sorted(set(n) - set(a))
 
     print(f"\n  shared names        {len(shared)} of 52")
-    print(f"  ARKit-only          {len(only_arkit)}")
+    print(f"  standard-only       {len(only_standard)}")
     print(f"  ANNY-only           {len(only_anny)}")
-    if only_arkit:
-        print("\n  in ARKit, absent from ANNY:")
-        for k in only_arkit:
+    if only_standard:
+        print("\n  in the standard, absent from ANNY:")
+        for k in only_standard:
             print(f"    {a[k]}")
     if only_anny:
-        print("\n  in ANNY, absent from ARKit:")
+        print("\n  in ANNY, absent from the standard:")
         for k in only_anny:
             print(f"    {n[k]}")
 
-    if not only_arkit and not only_anny:
+    if not only_standard and not only_anny:
         print("\n  ok    the two sets are the same 52 names. 'Same definition' holds at "
               "name level.\n        Semantics still unverified: a shared name is not a "
               "shared meaning, which is\n        what ICT-FaceKit got wrong.")
         return 0
-    print(f"\n  FAIL  the sets differ. ANNY's actions are not ARKit's 52 by name, so the "
+    print(f"\n  FAIL  the sets differ. ANNY's actions are not the 52 by name, so the "
           f"runtime\n        path needs a measured map rather than an assumed identity.")
     return 1
 
