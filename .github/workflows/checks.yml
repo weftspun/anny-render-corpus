@@ -75,6 +75,10 @@ jobs:
       # Both halves, because no single environment verifies all eleven claims: the schema
       # pair needs `corpus` and the rig measurements need `anny`. One run alone would leave
       # the other half reading as ERROR with nothing saying it was checked elsewhere.
+      # `if: always()`, because the first step exits non-zero by design and steps otherwise
+      # stop at the first failure -- which would leave the half it does verify unrecorded.
       - run: pixi run -e anny python check_readme_claims.py
       - run: pixi run -e corpus python check_readme_claims.py
+        if: always()
       - run: pixi run -e anny python check_readme_claims.py --pose-libraries
+        if: always()
