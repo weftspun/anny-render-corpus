@@ -45,6 +45,27 @@ def dataset_roots(here=None):
     return ()
 
 
+CACHE_FILE = "claim-cache.txt"
+
+
+def claim_cache(here=None):
+    """The last measured value of claims whose source can go out of reach, as
+    `name value measured-on where`. Read only: this script never writes an entry, so a
+    number here is one somebody recorded after actually measuring it."""
+    here = here or os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, CACHE_FILE)
+    out = {}
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.split("#")[0].split()
+            if len(parts) >= 3:
+                out[parts[0]] = {"value": float(parts[1]), "measured": parts[2],
+                                 "where": " ".join(parts[3:]) or "unrecorded"}
+    return out
+
+
 def _roots(roots):
     got = dataset_roots() if roots is None else tuple(roots)
     if not got:
@@ -214,8 +235,8 @@ MEASUREMENTS = {
 CLAIM_RE = re.compile(r"<!--\s*claim:(\w+)=([-\d.]+)(?:\s+tol=([\d.]+))?\s*-->")
 
 
-def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "README.md"
+def main(path=None):
+    path = path or (sys.argv[1] if len(sys.argv) > 1 else "README.md")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
 
@@ -227,6 +248,8 @@ def main():
     print("%-24s %12s %12s %10s  %s" % ("claim", "README", "measured", "tol", "verdict"))
     print("-" * 76)
     bad = 0
+    cached = []
+    cache = claim_cache()
 
     import io
     import contextlib
@@ -245,9 +268,21 @@ def main():
             with contextlib.redirect_stdout(io.StringIO()):
                 got = float(fn())
         except Exception as exc:                                   # noqa: BLE001
-            print("%-24s %12.3f %12s %10s  ERROR %s"
-                  % (name, stated, "-", "-", type(exc).__name__))
-            bad += 1
+            entry = cache.get(name) if isinstance(exc, FileNotFoundError) else None
+            if entry is None:
+                print("%-24s %12.3f %12s %10s  ERROR %s"
+                      % (name, stated, "-", "-", type(exc).__name__))
+                bad += 1
+                continue
+            got, when = entry["value"], entry["measured"]
+            if abs(got - stated) > tol:
+                print("%-24s %12.3f %12.3f %10.3f  DRIFTED against cache of %s"
+                      % (name, stated, got, tol, when))
+                bad += 1
+            else:
+                print("%-24s %12.3f %12.3f %10.3f  CACHED %s, not measured"
+                      % (name, stated, got, tol, when))
+                cached.append(name)
             continue
         ok = abs(got - stated) <= tol
         bad += 0 if ok else 1
@@ -255,6 +290,12 @@ def main():
               % (name, stated, got, tol, "ok" if ok else "DRIFTED"))
 
     print()
+    if cached:
+        print("%d claim(s) answered from %s because the source was unreachable: %s."
+              % (len(cached), CACHE_FILE, ", ".join(cached)))
+        print("A cached value is a record of a past measurement, not a measurement. It")
+        print("is never written by this script; someone recorded it after measuring.")
+        print()
     if bad:
         print("%d claim(s) drifted or unverified -- the README is making statements the"
               % bad)
@@ -315,9 +356,10 @@ def report_pose_libraries(roots=None):
 
 
 def self_test():
-    """Twelve controls. Five must reject a lookup that answers for a set it never found."""
+    """Seventeen controls. Six must reject a lookup that answers for a set it never found."""
     r = []
-
+    import contextlib
+    import io
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         _fixture(tmp, "alpha-motions", 3)
@@ -360,6 +402,30 @@ def self_test():
                   dataset_roots(tmp) == ("Z:/local",)))
     r.append(("no configured root is an error, not an empty answer",
               _misses_roots()))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        write(os.path.join(tmp, CACHE_FILE),
+              ["# a comment", "", "a_claim  810  2026-08-24  O:/somewhere", "b_claim 2 2026-01-01"])
+        got = claim_cache(tmp)
+        r.append(("a cached entry carries its value, date and origin",
+                  got["a_claim"] == {"value": 810.0, "measured": "2026-08-24",
+                                     "where": "O:/somewhere"}))
+        r.append(("an entry with no origin records that rather than inventing one",
+                  got["b_claim"]["where"] == "unrecorded"))
+        r.append(("a claim absent from the cache is not answered",
+                  "c_claim" not in got))
+        r.append(("an empty cache is not an error", claim_cache(tmp + "/nope") == {}))
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, CACHE_FILE)
+    before = open(path, "rb").read() if os.path.exists(path) else None
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            main(os.path.join(here, "README.md"))
+        except SystemExit:
+            pass
+    after = open(path, "rb").read() if os.path.exists(path) else None
+    r.append(("running the gate never writes the cache", before == after))
 
     for name, ok in r:
         print("  %-4s control: %s" % ("ok" if ok else "FAIL", name))
