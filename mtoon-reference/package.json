@@ -1,0 +1,18 @@
+{
+  "name": "mtoon-reference",
+  "version": "1.0.0",
+  "description": "The differential test behind `mtoon.py`: our MToon 1.0 against `@pixiv/three-vrm`, the reference implementation, rendered in headless Chromium and compared pixel for pixel.",
+  "main": "run.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
+    "playwright": "^1.62.1",
+    "three": "^0.185.1"
+  }
+}

@@ -1,4 +1,4 @@
+# The dependency directory, never the declarations beside it. `package.json` and
+# `package-lock.json` are what let anyone rebuild this; ignoring them was the uv hazard.
 node_modules/
-package-lock.json
-package.json
 testshape.obj
