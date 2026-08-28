@@ -56,6 +56,14 @@ jobs:
       - run: pixi run -e anny python check_published.py --self-test
       - run: pixi run -e anny python check_view_selection.py
       - run: pixi run -e anny python check_corpus_model.py --self-test
+      - run: pixi run -e anny python interface_audit.py
+      # THE CORPUS GATE, ON A GENERATED STUB. This is the exception to "controls only"
+      # above and earns it: the stub is sampled deterministically from a seed, so it is
+      # real corpus data rather than a corpus this runner happens to hold. The red/green
+      # pass is the one that matters -- it mutates the stub and requires each check to
+      # catch its own defect.
+      - run: pixi run -e anny preflight
+      - run: pixi run -e anny preflight-red-green
 
   # THE README'S OWN NUMBERS, WHICH IS THE CLAIM THIS REPOSITORY OPENS WITH.
   #
