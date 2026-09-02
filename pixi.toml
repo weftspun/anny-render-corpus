@@ -124,6 +124,7 @@ omnigen2 = { features = ["omnigen2"], no-default-feature = true }
 editscore = { features = ["editscore"], no-default-feature = true }
 corpus = { features = ["corpus"], no-default-feature = true }
 anny = { features = ["anny"], no-default-feature = true }
+anny-mac = { features = ["anny-mac"], no-default-feature = true }
 usd = { features = ["usd"], no-default-feature = true }
 
 [target.osx-arm64.dependencies]
@@ -356,6 +357,30 @@ facs = "python check_facial_actions.py"
 # 3000 identities, not fewer. Below about that the detection-floor check fails on its own
 # terms -- a 200-identity stub reports 28 checks rather than 29, because a subgroup check
 # never fires, and that reads as a missing check rather than as a small corpus.
+stub-corpus = "python sample_identities.py --out build/stub-corpus --count 3000"
+preflight = { cmd = "python preflight_audit.py build/stub-corpus", depends-on = ["stub-corpus"] }
+preflight-red-green = { cmd = "python test_preflight.py build/stub-corpus", depends-on = ["stub-corpus"] }
+
+# The mac-scoped counterpart the [feature.anny] comment above names. Same package set;
+# torch comes from the default PyPI index because whl/cpu (used by feature.anny for
+# linux and windows) serves no macOS wheels. Kept as a separate feature rather than a
+# wider platforms list because the torch source diverges per platform.
+[feature.anny-mac]
+platforms = ["osx-arm64"]
+
+[feature.anny-mac.dependencies]
+python = "3.11.*"
+
+[feature.anny-mac.pypi-dependencies]
+anny = "*"
+numpy = ">=2.0"
+torch = ">=2.6"
+rfdetr = "*"
+pandas = ">=2.0"
+pyarrow = ">=15"
+
+[feature.anny-mac.tasks]
+facs = "python check_facial_actions.py"
 stub-corpus = "python sample_identities.py --out build/stub-corpus --count 3000"
 preflight = { cmd = "python preflight_audit.py build/stub-corpus", depends-on = ["stub-corpus"] }
 preflight-red-green = { cmd = "python test_preflight.py build/stub-corpus", depends-on = ["stub-corpus"] }
