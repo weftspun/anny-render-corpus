@@ -387,10 +387,6 @@ torch = ">=2.6"
 rfdetr = "*"
 pandas = ">=2.0"
 pyarrow = ">=15"
-# MediaPipe FaceMesh: walking-skeleton stand-in for rf-detr-keypoint until the latter is
-# face-trained. Apache-2.0, 468 landmarks, self-contained wheel. Recorded here so the
-# stand-in is visible in one diff rather than an undeclared install.
-mediapipe = "*"
 # Mitsuba pinned to match the workspace default. MaskScore Rung 1 fits ANNY and renders it
 # in one process; splitting the two into separate envs would need a mesh handoff on disk
 # between calls, which is the seam a rung-1 run does not need.
