@@ -125,6 +125,7 @@ editscore = { features = ["editscore"], no-default-feature = true }
 corpus = { features = ["corpus"], no-default-feature = true }
 anny = { features = ["anny"], no-default-feature = true }
 anny-mac = { features = ["anny-mac"], no-default-feature = true }
+asr = { features = ["asr"], no-default-feature = true }
 usd = { features = ["usd"], no-default-feature = true }
 
 [target.osx-arm64.dependencies]
@@ -397,3 +398,26 @@ facs = "python check_facial_actions.py"
 stub-corpus = "python sample_identities.py --out build/stub-corpus --count 3000"
 preflight = { cmd = "python preflight_audit.py build/stub-corpus", depends-on = ["stub-corpus"] }
 preflight-red-green = { cmd = "python test_preflight.py build/stub-corpus", depends-on = ["stub-corpus"] }
+
+# NVIDIA Parakeet TDT 0.6B v3 for ASR. Native word timestamps, 6.32% WER vs Whisper
+# large-v3's 7.44%. Isolated env because NeMo drags in a large ML stack (hydra, omegaconf,
+# lightning, sentencepiece, ...) that would risk clobbering anny-mac's torch pin.
+[feature.asr]
+platforms = ["osx-arm64"]
+
+[feature.asr.dependencies]
+python = "3.11.*"
+
+[feature.asr.pypi-dependencies]
+nemo_toolkit = { version = ">=2.0", extras = ["asr"] }
+numpy = ">=2.0"
+torch = ">=2.6"
+soundfile = "*"
+pyarrow = ">=15"
+# Whisper large-v3 (Apache-2.0) for the English-forced track, alongside Parakeet's
+# as-heard track. Runs on MPS with the same torch pin.
+openai-whisper = "*"
+# epitran (MIT) grapheme-to-IPA, supports many scripts so it handles the
+# English/Russian code-switching Parakeet/Whisper may return. Native IPA output; no
+# nltk data dance g2p_en would need.
+epitran = "*"
