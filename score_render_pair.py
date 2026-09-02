@@ -30,7 +30,6 @@ from PIL import Image
 
 def load_aov(view_json: pathlib.Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return (depth (H,W), normal (H,W,3), alpha (H,W)) from a render sidecar."""
-    aov_npz = view_json.parent / view_json.stem[:-len('')].replace(view_json.stem, view_json.stem)
     aov_npz = view_json.with_suffix(".aov.npz")
     z = np.load(aov_npz)
     depth = z["depth"].astype(np.float32)
@@ -43,7 +42,8 @@ def load_aov(view_json: pathlib.Path) -> tuple[np.ndarray, np.ndarray, np.ndarra
 
 
 def score_pair(ref_dir: pathlib.Path, cand_dir: pathlib.Path) -> list[dict]:
-    ref_views = sorted(ref_dir.glob("view_*.json"))
+    ref_views = sorted([p for p in ref_dir.glob("view_*.json") if ".keypoints" not in p.name])
+
     if not ref_views:
         raise SystemExit(f"no view_*.json in {ref_dir}")
     scores = []
