@@ -124,7 +124,7 @@ def vertex_normals(verts, faces):
 
 
 def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, variant,
-           distance=1.0, direction=None):
+           distance=1.0, direction=None, aov=False):
     import drjit as dr
     import mitsuba as mi
 
@@ -241,6 +241,62 @@ def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, varia
     # hashes a file that is not there yet.
     bmp.write(str(out_png))
 
+    # AOV PASS, WHEN REQUESTED. A THIRD SHORT RENDER, NOT AN EXTENSION OF THE COLOUR ONE.
+    #
+    # MaskScore Rung 1 wants first-hit depth and world-space shading normals per view so the
+    # render-and-compare metrics have a reference to score against. Mitsuba's `aov` integrator
+    # wraps a path integrator and exposes those as channels; a `multichannel` film writes them
+    # into one EXR. Depth is `dd.y` (distance along the sensor's view ray at first hit) so it
+    # is a per-pixel scalar in scene units, not a screen-space z. Normals are `sh_normal`, the
+    # shading normals used by the BSDF -- the area-weighted vertex normals computed above --
+    # in the world frame, which is what a downstream L1/SSIM compares.
+    #
+    # `max_depth=1` because nothing past the first hit changes depth or the first-hit normal.
+    # The matte pass is kept above unchanged: alpha still comes from that, not from the AOV.
+    aov_side = None
+    if aov:
+        # SAVED AS NPZ, NOT EXR. Mitsuba's multichannel Bitmap constructor for float32 AOVs is
+        # fragile across 3.9's helpers -- one path silently writes an empty header, another
+        # requires an ImageFormat that needs an OpenEXR shared lib pixi does not carry. npz
+        # sidesteps both, keeps the payload lossless, is deterministic to hash, and reads back
+        # with a two-line np.load. The parquet row references the .npz path just as it would
+        # an .exr.
+        aov_out = pathlib.Path(out_png).with_suffix(".aov.npz")
+        aov_scene = mi.load_dict({
+            "type": "scene",
+            "integrator": {"type": "aov",
+                           "aovs": "depth:depth,normal:sh_normal",
+                           "integrator": {"type": "path", "max_depth": 1}},
+            "sensor": {
+                "type": "perspective", "fov": fov_deg, "fov_axis": "y",
+                "to_world": mi.ScalarTransform4f().look_at(
+                    origin=[float(x) for x in eye], target=[0, 0, 0], up=[0, 0, 1]),
+                "film": {"type": "hdrfilm", "width": 1024, "height": 1024,
+                         "rfilter": {"type": "box"},
+                         "pixel_format": "rgba", "component_format": "float32"},
+                "sampler": {"type": "independent", "sample_count": max(1, spp // 8)},
+            },
+            "body": mesh,
+        })
+        aov_img = np.array(mi.render(aov_scene, spp=max(1, spp // 8), seed=0))
+        # Mitsuba lays the AOVs after the film's own rgba: [R, G, B, A, depth, nx, ny, nz].
+        # Assert the width so a future variant that changes the layout fails loudly here
+        # rather than as a downstream score that silently reads normals from the wrong slice.
+        if aov_img.shape[2] != 8:
+            raise SystemExit(f"aov pass produced {aov_img.shape[2]} channels, expected 8 "
+                             f"(rgba + depth + normal_xyz)")
+        depth = aov_img[:, :, 4].astype(np.float32)
+        normal = aov_img[:, :, 5:8].astype(np.float32)
+        np.savez_compressed(aov_out, depth=depth, normal=normal)
+        aov_side = {
+            "path": aov_out.name,
+            "arrays": {"depth": "(H, W) float32", "normal": "(H, W, 3) float32"},
+            "depth_units": "scene units (unit cube after normalisation)",
+            "normal_frame": "world, shading normal",
+            "spp": max(1, spp // 8),
+            "sha256": hashlib.sha256(aov_out.read_bytes()).hexdigest(),
+        }
+
     digest = hashlib.sha256(pathlib.Path(out_png).read_bytes()).hexdigest()
     side = {
         "generator": ("sphere_hammersley_sequence, TencentARC/Pixal3D @ cdbb2bb"
@@ -257,6 +313,8 @@ def render(mesh_npz, out_png, index, views, fov_deg, offset, spp, threads, varia
         "covered_pixels": covered,
         "partial_coverage_pixels": partial,
     }
+    if aov_side is not None:
+        side["aov"] = aov_side
     pathlib.Path(out_png).with_suffix(".json").write_text(json.dumps(side, indent=2))
     return side
 
@@ -276,10 +334,12 @@ def main(argv):
     # `metal_ad_rgb` is accepted and is NOT reproducible -- see the note in render(). Anything
     # writing corpus data wants the default.
     ap.add_argument("--variant", default="llvm_ad_rgb")
+    ap.add_argument("--aov", action="store_true",
+                    help="also emit <out.aov.exr> with depth + world-space shading normals")
     a = ap.parse_args(argv[1:])
 
     s = render(a.mesh_npz, pathlib.Path(a.out_png), a.index, a.views, a.fov,
-               tuple(a.offset), a.spp, a.threads, a.variant, a.distance)
+               tuple(a.offset), a.spp, a.threads, a.variant, a.distance, aov=a.aov)
     print(f"  view {a.index}/{a.views}  yaw {s['yaw_deg']:7.2f}  pitch {s['pitch_deg']:6.2f}  "
           f"radius {s['radius']:.3f}  fov {s['fov_deg']}  distance {s['distance_factor']}  "
           f"sha256 {s['sha256'][:12]}...")

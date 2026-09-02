@@ -368,8 +368,17 @@ preflight-red-green = { cmd = "python test_preflight.py build/stub-corpus", depe
 [feature.anny-mac]
 platforms = ["osx-arm64"]
 
+# The workspace-level [target.osx-arm64.activation.env] does not reach a `no-default-feature`
+# environment. Restated here so `anny-mac` can find libLLVM.dylib at set_variant() time.
+[feature.anny-mac.target.osx-arm64.activation.env]
+DRJIT_LIBLLVM_PATH = "$CONDA_PREFIX/lib/libLLVM.20.1.dylib"
+
 [feature.anny-mac.dependencies]
 python = "3.11.*"
+# Mitsuba's llvm_ad_rgb variant loads libLLVM.dylib at set_variant() time. Absent it, the
+# import path prints an unhelpful "jit_init_thread_state" error and fails; the default env
+# takes libllvm20 from conda-forge for the same reason.
+libllvm20 = ">=20.1.8,<21"
 
 [feature.anny-mac.pypi-dependencies]
 anny = "*"
@@ -382,6 +391,10 @@ pyarrow = ">=15"
 # face-trained. Apache-2.0, 468 landmarks, self-contained wheel. Recorded here so the
 # stand-in is visible in one diff rather than an undeclared install.
 mediapipe = "*"
+# Mitsuba pinned to match the workspace default. MaskScore Rung 1 fits ANNY and renders it
+# in one process; splitting the two into separate envs would need a mesh handoff on disk
+# between calls, which is the seam a rung-1 run does not need.
+mitsuba = "==3.9.1"
 
 [feature.anny-mac.tasks]
 facs = "python check_facial_actions.py"
