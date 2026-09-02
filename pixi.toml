@@ -414,10 +414,14 @@ numpy = ">=2.0"
 torch = ">=2.6"
 soundfile = "*"
 pyarrow = ">=15"
-# Whisper large-v3 (Apache-2.0) for the English-forced track, alongside Parakeet's
-# as-heard track. Runs on MPS with the same torch pin.
+# Whisper large-v3 (Apache-2.0) auto-detect language.
 openai-whisper = "*"
-# epitran (MIT) grapheme-to-IPA, supports many scripts so it handles the
-# English/Russian code-switching Parakeet/Whisper may return. Native IPA output; no
-# nltk data dance g2p_en would need.
-epitran = "*"
+# transformers (Apache-2.0) hosts the additional judges we panel: wav2vec2, Voxtral,
+# and Kyutai STT. All under permissive licences (Apache/CC-BY-4.0).
+transformers = ">=4.50"
+accelerate = "*"
+librosa = "*"
+# Voxtral (Apache-2.0) via Mistral's common package.
+mistral-common = { version = ">=1.5", extras = ["audio"] }
+# Kyutai STT (CC-BY-4.0) via its own moshi package.
+moshi = "*"
