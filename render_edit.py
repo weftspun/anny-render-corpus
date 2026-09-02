@@ -65,17 +65,11 @@ def main(argv):
 
     a.render_dir.mkdir(parents=True, exist_ok=True)
 
-    # Frame A -> existing rest renders. Zero re-render cost.
-    if a.rest_renders.exists():
-        link(a.rest_renders, a.render_dir / "frame_a")
-        print(f"  frame_a -> {a.rest_renders} (symlink)")
-    else:
-        print(f"  rest renders not found at {a.rest_renders}; rendering frame_a fresh")
-        render_mesh(a.edit_dir / "frame_a.npz", a.render_dir / "frame_a",
-                    a.views, a.fov, a.spp, a.threads, a.variant)
-
-    # New render batches. rank1 shares with frame_b (identical verts by construction).
-    to_render = ["frame_b", "rank2", "rank3", "rank4", "rank5"]
+    # RENDER EVERY MESH FRESH. sphere_hammersley(i, n) depends on n: view 0 of a
+    # 64-view sequence is not view 0 of a 100-view sequence -- symlinking earlier
+    # renders across --views would mis-align frame A against the candidates and any
+    # score would be measuring the sampler difference, not the edit.
+    to_render = ["frame_a", "frame_b", "rank2", "rank3", "rank4", "rank5"]
     for name in to_render:
         npz = a.edit_dir / f"{name}.npz"
         if not npz.is_file():
