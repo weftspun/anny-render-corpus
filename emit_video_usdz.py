@@ -3,9 +3,10 @@
 Each Video-stub artifact carries in a single self-contained USDZ package:
 
   SkelRoot
-   |- Mesh (rest ANNY body, 18,056 verts)
-   |- Skeleton (78 SOMA joints at rest -- edits do not move bones)
-   |- SkelAnimation (blendShapeWeights time samples, 224 frames)
+   |- Mesh (rest ANNY body, 18,056 verts) with real skin weights per RFD 2162.1
+   |- Skeleton (104 ANNY joints at rest -- edits do not move bones yet;
+      real bind + rest transforms so a future pose-animated candidate binds)
+   |- SkelAnimation (blendShapeWeights time samples, 224 frames; no joint anim)
    |- BlendShape x52 (per-FACS-action sparse vertex offsets)
    `- SpatialAudio (references SpeakingFaces WAV embedded in the usdz)
   Custom metadata on the root: {webvtt_path: 'transcript.vtt'} + provenance dict
@@ -37,6 +38,8 @@ import wave
 import numpy as np
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdMedia, UsdSkel, Vt
 
+import usd_skel_bindings
+
 
 HERE = pathlib.Path(__file__).resolve().parent
 CANDIDATES = ["rank1", "rank2", "rank3", "rank4", "rank5"]
@@ -50,7 +53,8 @@ def wav_duration(path: pathlib.Path) -> float:
 def build_stage(work_dir: pathlib.Path, blendshapes_npz: pathlib.Path,
                 weights_per_frame: np.ndarray, endpoint_actions: dict,
                 fps: int, audio_path: pathlib.Path, audio_duration: float,
-                webvtt_name: str, provenance: dict, out_usda: pathlib.Path) -> None:
+                webvtt_name: str, provenance: dict, out_usda: pathlib.Path,
+                skinning_npz: pathlib.Path | None = None) -> None:
     """Write a .usda referencing the audio (copied into work_dir alongside)."""
     bs = np.load(blendshapes_npz)
     rest_verts = bs["rest_verts"]
@@ -74,14 +78,23 @@ def build_stage(work_dir: pathlib.Path, blendshapes_npz: pathlib.Path,
     mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(faces.reshape(-1).astype(np.int32)))
     mesh.CreateFaceVertexCountsAttr(Vt.IntArray([3] * faces.shape[0]))
 
-    binding = UsdSkel.BindingAPI.Apply(mesh.GetPrim())
-
-    skel = UsdSkel.Skeleton.Define(stage, "/anny_video/skeleton")
-    joint_names = ["root"]     # bones stay at rest for facial-action edits
-    skel.CreateJointsAttr(joint_names)
-    skel.CreateBindTransformsAttr([Gf.Matrix4d(1.0)])
-    skel.CreateRestTransformsAttr([Gf.Matrix4d(1.0)])
-    binding.CreateSkeletonRel().SetTargets([skel.GetPrim().GetPath()])
+    # RFD 2162.1: author the full 104-joint ANNY skeleton with real bind + rest
+    # transforms and per-vertex skin weights, so a downstream tool that reads
+    # the USDZ can render pose-animated candidates instead of silently
+    # collapsing them to the single dummy joint the earlier version used.
+    # The skinning is prebuilt by usd_skel_bindings.py --build under anny-mac
+    # and passed as a sidecar so this script does not need anny_rig at runtime.
+    if skinning_npz is None or not skinning_npz.is_file():
+        raise SystemExit(f"missing skinning sidecar; run `pixi run -e anny-mac "
+                         f"python usd_skel_bindings.py build --render-verts-npz "
+                         f"{blendshapes_npz} --out build/anny_skinning.npz` first")
+    skinning = usd_skel_bindings.load(skinning_npz)
+    if skinning.render_verts != rest_verts.shape[0]:
+        raise SystemExit(f"skinning sidecar has {skinning.render_verts} verts "
+                         f"but mesh has {rest_verts.shape[0]}")
+    usd_skel_bindings.apply_to_usd(stage, "/anny_video/skeleton",
+                                    "/anny_video/body", skinning)
+    binding = UsdSkel.BindingAPI(mesh.GetPrim())
 
     anim = UsdSkel.Animation.Define(stage, "/anny_video/animation")
     anim.CreateBlendShapesAttr(labels)
@@ -159,6 +172,9 @@ def main(argv):
     ap.add_argument("--transcript",   type=pathlib.Path,
                     default=HERE / "build" / "transcripts" / "100_1_2_1_97_1.vtt",
                     help="webvtt sidecar to embed by reference (created by later ASR step)")
+    ap.add_argument("--skinning-npz", type=pathlib.Path,
+                    default=HERE / "build" / "anny_skinning.npz",
+                    help="Skinning sidecar built by usd_skel_bindings.py build")
     a = ap.parse_args(argv[1:])
 
     manifest = json.loads((a.edit_dir / "manifest.json").read_text())
@@ -222,7 +238,8 @@ def main(argv):
                             audio_duration=audio_dur,
                             webvtt_name=a.transcript.name,
                             provenance=provenance,
-                            out_usda=work / "root.usda")
+                            out_usda=work / "root.usda",
+                            skinning_npz=a.skinning_npz)
                 emit_usdz(work, edit_out / f"{cand}.usdz")
                 total += 1
                 print(f"  {edit_name}/{cand}.usdz", flush=True)
