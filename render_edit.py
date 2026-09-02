@@ -1,24 +1,36 @@
-"""Render frame B + 5 edit candidates over the sphere_hammersley_sequence.
+"""Render frame_a + every (edit, candidate) mesh over sphere_hammersley_sequence.
 
-Frame A is symlinked to the existing rest renders (build/bootstrap/renders/input) --
-no double-render for an unchanged mesh. Rank1 == frame_b by construction (same actions
-= same verts); it is symlinked once frame_b's renders complete. Frame B and rank2/3/4/5
-each get their own 64-view batch with depth + normal AOVs.
+Walks the manifest generate_edit_candidates.py wrote and renders every unique mesh
+once. rank1 is identical to frame_b for the edit (same facial_actions vector, same
+verts), so rank1 symlinks to frame_b's render dir per edit rather than double-rendering
+64+ views of the same mesh.
 
-Wall-clock at llvm_ad_rgb 1 thread, spp=16: ~7 s/view -> ~35 min total for 5 mesh
-batches x 64 views.
+Layout after run:
+  build/edit/renders/frame_a/                  24 views of the rest pose
+  build/edit/renders/<edit>/frame_b/           24 views of the edit's target
+  build/edit/renders/<edit>/rank1              symlink -> ../<edit>/frame_b
+  build/edit/renders/<edit>/rank2/, rank3/, rank4/, rank5/
+                                                24 views of each candidate
+
+Wall-clock at llvm_ad_rgb 1 thread, spp=16: about 7 seconds per view.
+1 frame_a + 10 edits * 5 unique meshes per edit = 51 mesh batches.
+51 * 24 views = 1,224 renders ~= 2.4 hours.
 
 Usage:
-    pixi run --environment anny-mac python render_edit.py [--views 64] [--spp 16]
+    pixi run --environment anny-mac python render_edit.py [--views 24] [--spp 16]
 """
 
 import argparse
+import json
 import pathlib
 import shutil
 import sys
 import time
 
 import render_view
+
+
+CANDIDATE_MESH_NAMES = ("frame_b", "rank2", "rank3", "rank4", "rank5")
 
 
 def render_mesh(mesh_npz: pathlib.Path, out_dir: pathlib.Path, views: int, fov: float,
@@ -32,12 +44,8 @@ def render_mesh(mesh_npz: pathlib.Path, out_dir: pathlib.Path, views: int, fov: 
             spp=spp, threads=threads, variant=variant, distance=1.0,
             direction=None, aov=True,
         )
-        if i == 0 or (i + 1) % 16 == 0 or i == views - 1:
-            elapsed = time.time() - t0
-            rate = (i + 1) / elapsed
-            eta = (views - i - 1) / rate if rate > 0 else 0
-            print(f"  [{mesh_npz.stem}] view {i+1:3d}/{views}  "
-                  f"elapsed {elapsed:6.1f}s  eta {eta:6.1f}s", flush=True)
+    print(f"  [{mesh_npz.parent.name}/{mesh_npz.stem}] {views} views in "
+          f"{time.time() - t0:6.1f}s", flush=True)
 
 
 def link(src: pathlib.Path, dst: pathlib.Path) -> None:
@@ -53,35 +61,39 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--edit-dir",   type=pathlib.Path, default=pathlib.Path("build/edit"))
     ap.add_argument("--render-dir", type=pathlib.Path, default=pathlib.Path("build/edit/renders"))
-    ap.add_argument("--rest-renders", type=pathlib.Path,
-                    default=pathlib.Path("build/bootstrap/renders/input"),
-                    help="existing frame-a renders to symlink instead of re-rendering")
-    ap.add_argument("--views", type=int, default=64)
+    ap.add_argument("--views", type=int, default=24)
     ap.add_argument("--fov", type=float, default=40.0)
     ap.add_argument("--spp", type=int, default=16)
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--variant", default="llvm_ad_rgb")
     a = ap.parse_args(argv[1:])
 
+    manifest = json.loads((a.edit_dir / "manifest.json").read_text())
     a.render_dir.mkdir(parents=True, exist_ok=True)
 
-    # RENDER EVERY MESH FRESH. sphere_hammersley(i, n) depends on n: view 0 of a
-    # 64-view sequence is not view 0 of a 100-view sequence -- symlinking earlier
-    # renders across --views would mis-align frame A against the candidates and any
-    # score would be measuring the sampler difference, not the edit.
-    to_render = ["frame_a", "frame_b", "rank2", "rank3", "rank4", "rank5"]
-    for name in to_render:
-        npz = a.edit_dir / f"{name}.npz"
-        if not npz.is_file():
-            raise SystemExit(f"missing mesh: {npz}")
-        print(f"Rendering {name} ({a.views} views at spp={a.spp}, {a.variant} @ {a.threads} thread)...",
-              flush=True)
-        render_mesh(npz, a.render_dir / name, a.views, a.fov, a.spp, a.threads, a.variant)
+    # frame_a — one render batch, shared across every edit.
+    print(f"Rendering frame_a ({a.views} views, spp={a.spp}, {a.variant} @ {a.threads})...", flush=True)
+    render_mesh(a.edit_dir / "frame_a.npz", a.render_dir / "frame_a",
+                a.views, a.fov, a.spp, a.threads, a.variant)
 
-    link(a.render_dir / "frame_b", a.render_dir / "rank1")
-    print(f"  rank1 -> frame_b (symlink; rank1 == frame_b by construction)")
+    edits = list(manifest["edits"].keys())
+    total = 1 + len(edits) * len(CANDIDATE_MESH_NAMES)
+    print(f"Rendering {len(edits)} edits x {len(CANDIDATE_MESH_NAMES)} unique meshes each "
+          f"= {total - 1} more mesh batches, {(total - 1) * a.views} views to go", flush=True)
 
-    print(f"done. renders under {a.render_dir}/")
+    for edit_name in edits:
+        e_src = a.edit_dir / edit_name
+        e_dst = a.render_dir / edit_name
+        for mesh_stem in CANDIDATE_MESH_NAMES:
+            npz = e_src / f"{mesh_stem}.npz"
+            if not npz.is_file():
+                raise SystemExit(f"missing mesh: {npz}")
+            render_mesh(npz, e_dst / mesh_stem, a.views, a.fov, a.spp, a.threads, a.variant)
+        # rank1 is identical to frame_b (same facial_actions, same phenotype); symlink.
+        link(e_dst / "frame_b", e_dst / "rank1")
+        print(f"  [{edit_name}] rank1 -> frame_b (symlink)", flush=True)
+
+    print(f"done. renders under {a.render_dir}/", flush=True)
     return 0
 
 
