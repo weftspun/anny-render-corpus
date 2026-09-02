@@ -125,6 +125,8 @@ editscore = { features = ["editscore"], no-default-feature = true }
 corpus = { features = ["corpus"], no-default-feature = true }
 anny = { features = ["anny"], no-default-feature = true }
 anny-mac = { features = ["anny-mac"], no-default-feature = true }
+asr = { features = ["asr"], no-default-feature = true }
+tts = { features = ["tts"], no-default-feature = true }
 usd = { features = ["usd"], no-default-feature = true }
 
 [target.osx-arm64.dependencies]
@@ -397,3 +399,54 @@ facs = "python check_facial_actions.py"
 stub-corpus = "python sample_identities.py --out build/stub-corpus --count 3000"
 preflight = { cmd = "python preflight_audit.py build/stub-corpus", depends-on = ["stub-corpus"] }
 preflight-red-green = { cmd = "python test_preflight.py build/stub-corpus", depends-on = ["stub-corpus"] }
+
+# NVIDIA Parakeet TDT 0.6B v3 for ASR. Native word timestamps, 6.32% WER vs Whisper
+# large-v3's 7.44%. Isolated env because NeMo drags in a large ML stack (hydra, omegaconf,
+# lightning, sentencepiece, ...) that would risk clobbering anny-mac's torch pin.
+[feature.asr]
+platforms = ["osx-arm64"]
+
+[feature.asr.dependencies]
+python = "3.11.*"
+
+[feature.asr.pypi-dependencies]
+nemo_toolkit = { version = ">=2.0", extras = ["asr"] }
+numpy = ">=2.0"
+torch = ">=2.6"
+soundfile = "*"
+pyarrow = ">=15"
+# Whisper large-v3 (Apache-2.0) auto-detect language.
+openai-whisper = "*"
+# transformers (Apache-2.0) hosts the additional judges we panel: wav2vec2, Voxtral,
+# and Kyutai STT. All under permissive licences (Apache/CC-BY-4.0).
+transformers = ">=4.50"
+accelerate = "*"
+librosa = "*"
+# allosaurus (MIT): universal phone recognizer for the IPA panel's 5th judge.
+allosaurus = "*"
+mistral-common = ">=1.5.0"
+
+# Qwen3-TTS-12Hz-1.7B-Base (Apache-2.0) for the Speech stub's 10-rank voice-clone
+# candidates. Zero-shot 3-sec voice clone. Isolated in its own env because qwen-tts
+# requires Python 3.12; asr's 3.11 stack (parakeet/whisper) would conflict.
+[feature.tts]
+platforms = ["osx-arm64"]
+
+[feature.tts.dependencies]
+python = "3.12.*"
+
+[feature.tts.pypi-dependencies]
+qwen-tts = "*"
+soundfile = "*"
+# torch+torchaudio pinned as a pair; qwen-tts's unpinned torchaudio pulled the latest
+# wheel built against torch 2.5, then pip installed torch 2.9 latest and the ABI
+# mismatched at import (torchaudio's C ext refuses to load). Pinning both to matching
+# versions avoids the trap.
+torch = "==2.5.1"
+torchaudio = "==2.5.1"
+# Voxtral (Apache-2.0) via Mistral's common package. Extras causes silent skip in
+# this env; declare without extras and pixi installs the base package plus enough
+# to satisfy transformers' MistralCommonTokenizer import.
+mistral-common = ">=1.5"
+# Kyutai STT (CC-BY-4.0) via its own moshi package.
+moshi = "*"
