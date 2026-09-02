@@ -79,19 +79,28 @@ def build_tables(pose_dir: Path, scores_dir: Path) -> tuple[pa.Table, pa.Table, 
             raise SystemExit(f"missing: {p}")
         return str(p.relative_to(HERE))
 
+    # Root row uses the same schema as maskscore_rung_1_stubs.py for depth/pose/
+    # keypoints/multimodal, so all five stubs' root tables sit under one shape:
+    # (key, task_type, dimension, input_column, input_asset, input_asset_kind, poses).
+    # Rung 0's per-stub extras become interned values here.
     root = pa.table({
         "key": [KEY],
         "task_type": ["pose_change"],
         "dimension": ["instruction_following"],
-        "input_mesh": [real(pose_dir / "rest.npz")],
+        "input_column": ["input_mesh"],
+        "input_asset": [real(pose_dir / "rest.npz")],
+        "input_asset_kind": ["soma_mesh"],
         "poses": [real(pose_dir / "poses.json")],
     })
 
+    # Candidates satellite shape matches the other four stubs -- `candidate_asset`
+    # rather than a stub-specific column so all five stubs' candidates parquets
+    # concatenate cleanly for a downstream consumer.
     cands = pa.table({
         "row_key": [KEY] * len(CANDIDATES),
         "candidate": [name for name, _, _ in CANDIDATES],
         "rank": [rank for _, rank, _ in CANDIDATES],
-        "mesh_path": [real(pose_dir / mesh) for _, _, mesh in CANDIDATES],
+        "candidate_asset": [real(pose_dir / mesh) for _, _, mesh in CANDIDATES],
     })
 
     n_views = len(scores["rank1"]["views"])
