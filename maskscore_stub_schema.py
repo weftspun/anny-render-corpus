@@ -47,7 +47,7 @@ INPUT_ASSET_KINDS: tuple[str, ...] = (
 )
 
 CANDIDATE_AXES: tuple[str, ...] = (
-    "edit", "audio", "transcript", "view", "frame",
+    "edit", "audio", "transcript", "view", "frame", "text_edit",
 )
 
 CANDIDATE_ASSET_KINDS: tuple[str, ...] = INPUT_ASSET_KINDS + ("webvtt",)
@@ -81,6 +81,7 @@ CANDIDATE_KINDS_BY_AXIS: dict[str, tuple[str, ...]] = {
     "edit": (),   # populated once mesh emit refactor names its 15 edits
     "view": (),
     "frame": (),
+    "text_edit": ("identity", "paraphrase", "wrong_all"),
 }
 
 
